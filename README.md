@@ -61,12 +61,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.5`.
+- Push a matching SemVer tag such as `v0.2.6`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.6 2026-08-23 00:16:00
+
+- Made the floating ball DPI-aware: the GPUI surface remains 64×64 logical pixels while its native Win32 HWND is forced to the matching physical square size using the current GPUI window scale factor before the elliptical window region is applied. This keeps the visible ball and native hit region truly circular at Windows display scaling values such as 125%, 150%, and 200%.
+- Restored the floating-ball context menu to the floating window's own UI thread and trigger it on right-button release instead of right-button press. `TPM_NONOTIFY | TPM_RETURNCMD` is retained so menu commands do not re-enter the GPUI popup as `WM_COMMAND` messages.
+- Kept left-click and right-click paths completely separate and post `WM_NULL` after menu tracking, so the menu can be selected and dismissed normally without invoking the normal left-click show-main-window path or exiting the application accidentally.
 
 ### version 0.2.5 2026-08-22 23:50:03
 

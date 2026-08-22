@@ -1,5 +1,4 @@
 use crate::{platform, ui::AppState};
-use anyhow::{Context as _, Result};
 use gpui::{
     App, Bounds, Context, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Timer, Window, WindowBackgroundAppearance, WindowBounds,
@@ -7,24 +6,9 @@ use gpui::{
 };
 use gpui_component::v_flex;
 use std::{
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicBool, AtomicI32, Ordering},
-    },
+    sync::{Arc, RwLock},
     thread,
     time::{Duration, Instant},
-};
-use windows::{
-    Win32::{
-        Foundation::{HWND, LPARAM, POINT, WPARAM},
-        UI::WindowsAndMessaging::{
-            AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, HWND_TOPMOST,
-            MF_SEPARATOR, MF_STRING, PostMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-            SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_NONOTIFY,
-            TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_CLOSE, WM_NULL,
-        },
-    },
-    core::HSTRING,
 };
 
 const PANEL: u32 = 0x172033;
@@ -33,7 +17,6 @@ const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
 
 const FLOATING_BALL_SIZE: f32 = 64.0;
-const DEFAULT_FLOATING_BALL_NATIVE_SIZE: i32 = 64;
 const FLOATING_LIST_WIDTH: f32 = 240.0;
 const FLOATING_LIST_BASE_HEIGHT: f32 = 48.0;
 const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
@@ -42,13 +25,6 @@ const POINTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const POINTER_LEAVE_GRACE: Duration = Duration::from_millis(500);
 const LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(350);
 const WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(700);
-const FLOATING_MENU_SHOW_MAIN: u16 = 2001;
-const FLOATING_MENU_CLOSE: u16 = 2002;
-const FLOATING_MENU_EXIT: u16 = 2003;
-
-static FLOATING_CONTROLLER_VISIBLE: AtomicBool = AtomicBool::new(false);
-static FLOATING_FORCE_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-static FLOATING_BALL_NATIVE_SIZE: AtomicI32 = AtomicI32::new(DEFAULT_FLOATING_BALL_NATIVE_SIZE);
 
 fn floating_list_height(window_count: usize) -> f32 {
     let visible_rows = window_count.clamp(1, FLOATING_MAX_TABS) as f32;
@@ -67,129 +43,6 @@ fn opacity_from_state(state: &Arc<RwLock<AppState>>) -> f32 {
                 .map(|settings| settings.floating_opacity())
         })
         .unwrap_or(0.5)
-}
-
-fn find_window(title: &str) -> Result<HWND> {
-    let title = HSTRING::from(title);
-    // SAFETY: FindWindowW only reads the supplied title and returns a borrowed OS handle.
-    unsafe { FindWindowW(None, &title).context("FindWindowW failed") }
-}
-
-fn configure_floating_ball_native(native_size: i32) -> Result<()> {
-    let ball = find_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
-    let native_size = native_size.max(1);
-    // SAFETY: ball is this application's floating top-level HWND. GPUI sizes the surface in
-    // logical pixels, while SetWindowPos expects physical pixels; the caller supplies the logical
-    // 64px diameter multiplied by the current GPUI window scale factor.
-    unsafe {
-        SetWindowPos(
-            ball,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            native_size,
-            native_size,
-            SWP_NOMOVE | SWP_NOACTIVATE,
-        )
-        .context("SetWindowPos configure DPI-aware floating-ball size failed")?;
-    }
-    platform::configure_floating_ball_window()
-}
-
-pub fn set_controller_visible(visible: bool) -> Result<()> {
-    FLOATING_CONTROLLER_VISIBLE.store(visible, Ordering::SeqCst);
-    let ball = find_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
-    if visible {
-        let native_size = FLOATING_BALL_NATIVE_SIZE.load(Ordering::SeqCst);
-        configure_floating_ball_native(native_size)?;
-        // SAFETY: ball is the application's own floating top-level window and is already sized and
-        // configured before it becomes visible.
-        unsafe {
-            let _ = ShowWindow(ball, SW_SHOWNOACTIVATE);
-        }
-    } else {
-        let _ = platform::set_floating_list_visible(false);
-        // SAFETY: ball is the application's own floating top-level window.
-        unsafe {
-            let _ = ShowWindow(ball, SW_HIDE);
-        }
-    }
-    tracing::info!(visible, "floating controller visibility changed");
-    Ok(())
-}
-
-pub fn take_force_exit_requested() -> bool {
-    FLOATING_FORCE_EXIT_REQUESTED.swap(false, Ordering::SeqCst)
-}
-
-fn request_application_exit() -> Result<()> {
-    FLOATING_FORCE_EXIT_REQUESTED.store(true, Ordering::SeqCst);
-    let main = find_window(platform::MAIN_WINDOW_TITLE)?;
-    // SAFETY: main is the application's own top-level window. The main close callback sees the
-    // floating force-exit flag and terminates instead of minimizing to the tray.
-    unsafe {
-        PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0))
-            .context("PostMessageW WM_CLOSE from floating menu failed")?;
-    }
-    Ok(())
-}
-
-fn show_floating_context_menu() -> Result<()> {
-    let owner = find_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
-    // SAFETY: this function is called synchronously on the floating window's GPUI/UI thread after
-    // the right button has been released. TPM_NONOTIFY prevents WM_COMMAND re-entry into the GPUI
-    // popup while TPM_RETURNCMD returns the selected command directly to this call.
-    unsafe {
-        let menu = CreatePopupMenu().context("CreatePopupMenu for floating ball failed")?;
-        let result = (|| -> Result<()> {
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                usize::from(FLOATING_MENU_SHOW_MAIN),
-                windows::core::w!("Show main window"),
-            )
-            .context("AppendMenuW floating show failed")?;
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                usize::from(FLOATING_MENU_CLOSE),
-                windows::core::w!("Close floating controller"),
-            )
-            .context("AppendMenuW floating close failed")?;
-            AppendMenuW(menu, MF_SEPARATOR, 0, None)
-                .context("AppendMenuW floating separator failed")?;
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                usize::from(FLOATING_MENU_EXIT),
-                windows::core::w!("Exit"),
-            )
-            .context("AppendMenuW floating exit failed")?;
-
-            let mut cursor = POINT::default();
-            GetCursorPos(&mut cursor).context("GetCursorPos for floating menu failed")?;
-            let _ = SetForegroundWindow(owner);
-            let command = TrackPopupMenu(
-                menu,
-                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-                cursor.x,
-                cursor.y,
-                Some(0),
-                owner,
-                None,
-            );
-            let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
-            match command.0 as u16 {
-                FLOATING_MENU_SHOW_MAIN => platform::show_main_window()?,
-                FLOATING_MENU_CLOSE => set_controller_visible(false)?,
-                FLOATING_MENU_EXIT => request_application_exit()?,
-                _ => {}
-            }
-            Ok(())
-        })();
-        let _ = DestroyMenu(menu);
-        result
-    }
 }
 
 pub fn start_stable_window_watcher(snapshot: platform::WindowSnapshot) {
@@ -224,10 +77,9 @@ pub fn start_stable_window_watcher(snapshot: platform::WindowSnapshot) {
 }
 
 pub struct FloatingBall {
-    state: Arc<RwLock<AppState>>,
     list_visible: bool,
     last_pointer_inside: Instant,
-    configured_native_size: i32,
+    native_ready: bool,
     opacity: f32,
 }
 
@@ -254,18 +106,16 @@ impl FloatingBall {
                         })
                     })
                     .unwrap_or((false, 0.5));
-                let controller_visible = FLOATING_CONTROLLER_VISIBLE.load(Ordering::SeqCst);
 
                 if entity
                     .update(cx, move |view, cx| {
                         let now = Instant::now();
-                        if pointer_inside && controller_visible {
+                        if pointer_inside {
                             view.last_pointer_inside = now;
                         }
                         let keep_visible = view.list_visible
                             && now.duration_since(view.last_pointer_inside) < POINTER_LEAVE_GRACE;
-                        let desired_visible =
-                            controller_visible && (always_show || pointer_inside || keep_visible);
+                        let desired_visible = always_show || pointer_inside || keep_visible;
                         if desired_visible != view.list_visible
                             && platform::set_floating_list_visible(desired_visible).is_ok()
                         {
@@ -285,10 +135,9 @@ impl FloatingBall {
         .detach();
 
         Self {
-            state,
             list_visible: false,
             last_pointer_inside: Instant::now(),
-            configured_native_size: 0,
+            native_ready: false,
             opacity: initial_opacity,
         }
     }
@@ -297,23 +146,13 @@ impl FloatingBall {
 impl Render for FloatingBall {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
-        window.resize(size(px(FLOATING_BALL_SIZE), px(FLOATING_BALL_SIZE)));
-
-        let native_size = (FLOATING_BALL_SIZE * window.scale_factor())
-            .round()
-            .max(1.0) as i32;
-        FLOATING_BALL_NATIVE_SIZE.store(native_size, Ordering::SeqCst);
-        if self.configured_native_size != native_size
-            && configure_floating_ball_native(native_size).is_ok()
-        {
-            self.configured_native_size = native_size;
+        if !self.native_ready && platform::configure_floating_ball_window().is_ok() {
+            self.native_ready = true;
         }
-        self.opacity = opacity_from_state(&self.state);
 
         div()
-            .id("floating-ball-v7")
-            .w(px(FLOATING_BALL_SIZE))
-            .h(px(FLOATING_BALL_SIZE))
+            .id("floating-ball-v4")
+            .size_full()
             .rounded_full()
             .bg(rgb(ACCENT))
             .opacity(self.opacity)
@@ -328,13 +167,7 @@ impl Render for FloatingBall {
                     tracing::error!(%error, "failed to begin floating-ball drag");
                 }
             })
-            .on_mouse_up(MouseButton::Right, |_, _, cx| {
-                cx.stop_propagation();
-                if let Err(error) = show_floating_context_menu() {
-                    tracing::error!(%error, "failed to show floating-ball context menu");
-                }
-            })
-            .on_mouse_up(MouseButton::Left, |_, _, _| {
+            .on_click(|_, _, _| {
                 if let Err(error) = platform::handle_floating_ball_click() {
                     tracing::error!(%error, "failed to open main window from floating ball");
                 }
@@ -411,7 +244,7 @@ impl Render for FloatingList {
                 let label = format!("{}  {}", index + 1, mstsc.title);
                 rows = rows.child(
                     div()
-                        .id(("mstsc-list-row-v7", index))
+                        .id(("mstsc-list-row-v4", index))
                         .w_full()
                         .h(px(32.0))
                         .px_2()
@@ -470,7 +303,7 @@ pub fn floating_ball_window_options(cx: &App) -> WindowOptions {
         ))),
         titlebar: None,
         focus: false,
-        show: false,
+        show: true,
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,

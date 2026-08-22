@@ -4,13 +4,16 @@ use std::{
     mem::size_of,
     path::Path,
     process::Command,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Security::Credentials::{
             CRED_PERSIST_ENTERPRISE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         },
@@ -31,15 +34,17 @@ use windows::{
                 Shell_NotifyIconW,
             },
             WindowsAndMessaging::{
-                BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                EnumWindows, FindWindowW, GetForegroundWindow, GetMessageW, GetWindowRect,
+                AppendMenuW, BringWindowToTop, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+                DestroyMenu, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowW,
+                GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowRect,
                 GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HTCAPTION,
-                HWND_MESSAGE, HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW, MSG,
-                PostMessageW, RegisterClassW, SW_HIDE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow,
-                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_HOTKEY, WM_KEYDOWN,
-                WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCLBUTTONDOWN,
-                WNDCLASSW,
+                HWND_MESSAGE, HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW,
+                MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, SW_HIDE, SW_RESTORE,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetForegroundWindow,
+                SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu,
+                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
+                WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE,
+                WM_NCLBUTTONDOWN, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
             },
         },
     },
@@ -54,6 +59,10 @@ const HOTKEY_PREVIOUS: i32 = 0x5200;
 const HOTKEY_NEXT: i32 = 0x5201;
 const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
+const TRAY_MENU_OPEN: u16 = 1001;
+const TRAY_MENU_EXIT: u16 = 1002;
+
+static FORCE_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub type WindowSnapshot = Arc<RwLock<Vec<MstscWindow>>>;
 pub type RuntimeSettings = Arc<RwLock<AppSettings>>;
@@ -254,6 +263,22 @@ pub fn show_main_window() -> Result<()> {
     activate_hwnd(hwnd)
 }
 
+pub fn take_force_exit_requested() -> bool {
+    FORCE_EXIT_REQUESTED.swap(false, Ordering::SeqCst)
+}
+
+fn request_force_exit() -> Result<()> {
+    FORCE_EXIT_REQUESTED.store(true, Ordering::SeqCst);
+    let hwnd = find_window_by_title(MAIN_WINDOW_TITLE)?;
+    // SAFETY: hwnd is the application's main window. WM_CLOSE asks GPUI to run the normal close
+    // path; the atomic flag makes that path exit rather than hide to tray.
+    unsafe {
+        PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0))
+            .context("PostMessageW WM_CLOSE failed")?;
+    }
+    Ok(())
+}
+
 pub fn configure_floating_window_topmost() -> Result<()> {
     let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
     // SAFETY: hwnd is the floating controller window; flags preserve its size and position and do
@@ -293,6 +318,21 @@ pub fn resize_floating_window(width: i32, height: i32) -> Result<()> {
         .context("SetWindowPos resize failed")?;
     }
     Ok(())
+}
+
+pub fn cursor_in_floating_window() -> Result<bool> {
+    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
+    let mut rect = RECT::default();
+    let mut cursor = POINT::default();
+    // SAFETY: hwnd is the floating controller. Both output structures are valid writable storage.
+    unsafe {
+        GetWindowRect(hwnd, &mut rect).context("GetWindowRect failed")?;
+        GetCursorPos(&mut cursor).context("GetCursorPos failed")?;
+    }
+    Ok(cursor.x >= rect.left
+        && cursor.x < rect.right
+        && cursor.y >= rect.top
+        && cursor.y < rect.bottom)
 }
 
 pub fn begin_floating_drag() -> Result<()> {
@@ -386,6 +426,48 @@ fn tray_message_loop() -> Result<()> {
     Ok(())
 }
 
+fn show_tray_context_menu(hwnd: HWND) -> Result<()> {
+    // SAFETY: menu handles are created and destroyed in this function. The popup is owned by the
+    // tray message window and Windows sends its WM_COMMAND selection back to that HWND.
+    unsafe {
+        let menu = CreatePopupMenu().context("CreatePopupMenu failed")?;
+        let result = (|| -> Result<()> {
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                usize::from(TRAY_MENU_OPEN),
+                windows::core::w!("Open mstsc-mgr"),
+            )
+            .context("AppendMenuW open failed")?;
+            AppendMenuW(menu, MF_SEPARATOR, 0, None).context("AppendMenuW separator failed")?;
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                usize::from(TRAY_MENU_EXIT),
+                windows::core::w!("Exit"),
+            )
+            .context("AppendMenuW exit failed")?;
+
+            let mut point = POINT::default();
+            GetCursorPos(&mut point).context("GetCursorPos failed")?;
+            let _ = SetForegroundWindow(hwnd);
+            let _ = TrackPopupMenu(
+                menu,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+                point.x,
+                point.y,
+                Some(0),
+                hwnd,
+                None,
+            );
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+            Ok(())
+        })();
+        let _ = DestroyMenu(menu);
+        result
+    }
+}
+
 unsafe extern "system" fn tray_window_proc(
     hwnd: HWND,
     message: u32,
@@ -396,6 +478,22 @@ unsafe extern "system" fn tray_window_proc(
         match lparam.0 as u32 {
             WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
                 let _ = show_main_window();
+                return LRESULT(0);
+            }
+            WM_RBUTTONUP => {
+                let _ = show_tray_context_menu(hwnd);
+                return LRESULT(0);
+            }
+            _ => {}
+        }
+    } else if message == WM_COMMAND {
+        match (wparam.0 & 0xffff) as u16 {
+            TRAY_MENU_OPEN => {
+                let _ = show_main_window();
+                return LRESULT(0);
+            }
+            TRAY_MENU_EXIT => {
+                let _ = request_force_exit();
                 return LRESULT(0);
             }
             _ => {}

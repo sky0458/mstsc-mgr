@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     use gpui_component::Root;
     use gpui_component_assets::Assets;
     use mstsc_mgr::{
-        floating::{self, FloatingBall, FloatingList},
+        floating::{self, FloatingBall, FloatingContextMenu, FloatingList},
         logging, platform,
         ui::{self, AppState, ManagerView},
     };
@@ -46,6 +46,7 @@ fn main() -> anyhow::Result<()> {
         let manager_state = Arc::clone(&state);
         let floating_ball_state = Arc::clone(&state);
         let floating_list_state = Arc::clone(&state);
+        let floating_menu_state = Arc::clone(&state);
         let floating_enabled = state
             .read()
             .map(|guard| guard.settings.floating_controller)
@@ -89,37 +90,51 @@ fn main() -> anyhow::Result<()> {
 
         platform::start_tray_worker();
 
+        if let Err(error) = cx.open_window(
+            floating::floating_ball_window_options_with_visibility(cx, floating_enabled),
+            |window, cx| {
+                window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
+                cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
+            },
+        ) {
+            tracing::error!(%error, "failed to open floating ball");
+        }
+
+        if let Err(error) = cx.open_window(
+            floating::floating_list_window_options(cx),
+            |window, cx| {
+                window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
+                cx.new(|cx| FloatingList::new(floating_list_state, cx))
+            },
+        ) {
+            tracing::error!(%error, "failed to open floating MSTSC list");
+        }
+
+        if let Err(error) = cx.open_window(
+            floating::floating_context_menu_window_options(cx),
+            |window, cx| {
+                window.set_window_title(floating::FLOATING_MENU_WINDOW_TITLE);
+                cx.new(|_| FloatingContextMenu::new(floating_menu_state))
+            },
+        ) {
+            tracing::error!(%error, "failed to open floating custom context menu");
+        }
+
         if floating_enabled {
-            if let Err(error) = cx.open_window(
-                floating::floating_ball_window_options(cx),
-                |window, cx| {
-                    window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
-                    cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
-                },
-            ) {
-                tracing::error!(%error, "failed to open floating ball");
-            }
-
-            if let Err(error) = cx.open_window(
-                floating::floating_list_window_options(cx),
-                |window, cx| {
-                    window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
-                    cx.new(|cx| FloatingList::new(floating_list_state, cx))
-                },
-            ) {
-                tracing::error!(%error, "failed to open floating MSTSC list");
-            }
-
             if let Err(error) = platform::configure_floating_ball_window() {
                 tracing::warn!(%error, "floating ball native configuration will retry during render");
             }
             if let Err(error) = platform::configure_floating_list_window() {
                 tracing::warn!(%error, "floating list native configuration will retry during render");
             }
-            let initial_visible = floating::initial_list_visibility(&state);
-            if let Err(error) = platform::set_floating_list_visible(initial_visible) {
-                tracing::warn!(%error, "failed to apply initial floating-list visibility");
-            }
+        }
+
+        if let Err(error) = floating::set_controller_visible(floating_enabled) {
+            tracing::warn!(%error, "failed to apply initial floating-controller visibility");
+        }
+        let initial_visible = floating::initial_list_visibility(&state);
+        if let Err(error) = platform::set_floating_list_visible(initial_visible) {
+            tracing::warn!(%error, "failed to apply initial floating-list visibility");
         }
 
         cx.activate(true);

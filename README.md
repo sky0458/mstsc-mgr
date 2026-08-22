@@ -8,15 +8,19 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Save multiple RDP connections with host, port, username, password and optional MSTSC arguments.
 - Passwords and the local vault are encrypted with Windows DPAPI; plaintext secrets are not written to disk.
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
-- Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray, diagnostic logging and keepalive behavior.
+- Settings dialog for floating controller, floating opacity, persistent tabs, global hotkeys, close-to-tray, diagnostic logging and keepalive behavior.
 - Diagnostic logging defaults to enabled and writes `mstsc-mgr.log` next to `mstsc-mgr.exe` when that directory is writable. The Settings switch can stop subsequent log writes immediately; passwords, decrypted vault data and credential blobs are never logged.
 - Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
 - The floating controller is two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate compact MSTSC-session popup. Showing the list never resizes or moves the ball.
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
+- Floating-controller opacity is configurable from 10% to 100% with a Settings slider and defaults to 50%; the same value is applied to both the RDP ball and its hover session popup.
+- The floating controller is enabled by default and can be shown/hidden at runtime from Settings without restarting the application.
+- Right-clicking the floating ball opens a native menu with `Show main window`, `Close floating controller`, and `Exit` actions. Closing the controller hides the floating UI for the current run; it can be shown again from Settings.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
 - The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
+- Current MSTSC windows are placed into a stable PID/HWND order before the shared snapshot is published. Hover-list numbers and `Alt+Shift+1..9` therefore use the same ordering and no longer change merely because focus or Windows Z-order changes.
 - Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
 - Global switching operates on that complete system-wide set of visible MSTSC windows:
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
@@ -57,12 +61,19 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.3`.
+- Push a matching SemVer tag such as `v0.2.4`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.4 2026-08-22 22:50:30
+
+- Added a floating-controller opacity slider in Settings with a 10-100% range and a 50% default. The selected opacity is persisted and applied consistently to both the circular RDP ball and the hover session popup.
+- Made the existing floating-controller setting runtime-aware: the controller remains enabled by default, can be hidden from Settings, and can be shown again without restarting because the two floating windows are created once and then controlled through native Show/Hide operations.
+- Added a native right-click menu to the floating ball with `Show main window`, `Close floating controller`, and `Exit`. Closing hides only the floating controller, while Exit terminates the entire application even when close-to-tray is enabled.
+- Stabilized hover-list and numeric-hotkey numbering by sorting every system-wide MSTSC snapshot by PID and HWND before publishing it to the shared list used by both the popup and `Alt+Shift+1..9`. Changing focus/Z-order no longer reassigns session numbers.
 
 ### version 0.2.3 2026-08-22 22:04:00
 

@@ -16,8 +16,8 @@ use windows::{
         Foundation::{HWND, RECT},
         UI::WindowsAndMessaging::{
             FindWindowW, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE,
-            SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
+            SWP_NOACTIVATE, SWP_NOSIZE, SetWindowPos, ShowWindow,
         },
     },
     core::HSTRING,
@@ -283,8 +283,8 @@ impl FloatingBall {
                         }
                         let keep_visible = view.list_visible
                             && now.duration_since(view.last_pointer_inside) < POINTER_LEAVE_GRACE;
-                        let desired_visible = controller_enabled
-                            && (always_show || pointer_inside || keep_visible);
+                        let desired_visible =
+                            controller_enabled && (always_show || pointer_inside || keep_visible);
                         if desired_visible != view.list_visible
                             && platform::set_floating_list_visible(desired_visible).is_ok()
                         {

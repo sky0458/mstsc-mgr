@@ -89,23 +89,21 @@ fn main() -> anyhow::Result<()> {
 
         platform::start_tray_worker();
 
-        if let Err(error) = cx.open_window(
-            floating::floating_ball_window_options(cx),
-            |window, cx| {
+        if let Err(error) =
+            cx.open_window(floating::floating_ball_window_options(cx), |window, cx| {
                 window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
                 cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
-            },
-        ) {
+            })
+        {
             tracing::error!(%error, "failed to open floating ball");
         }
 
-        if let Err(error) = cx.open_window(
-            floating::floating_list_window_options(cx),
-            |window, cx| {
+        if let Err(error) =
+            cx.open_window(floating::floating_list_window_options(cx), |window, cx| {
                 window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
                 cx.new(|cx| FloatingList::new(floating_list_state, cx))
-            },
-        ) {
+            })
+        {
             tracing::error!(%error, "failed to open floating MSTSC list");
         }
 

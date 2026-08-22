@@ -323,10 +323,7 @@ impl Render for FloatingBall {
                 cx.stop_propagation();
                 show_floating_context_menu_async();
             })
-            .on_click(|event, _, _| {
-                if event.down.button != MouseButton::Left {
-                    return;
-                }
+            .on_mouse_up(MouseButton::Left, |_, _, _| {
                 if let Err(error) = platform::handle_floating_ball_click() {
                     tracing::error!(%error, "failed to open main window from floating ball");
                 }

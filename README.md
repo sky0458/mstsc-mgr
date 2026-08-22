@@ -14,6 +14,8 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - The floating controller is two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate compact MSTSC-session popup. Showing the list never resizes or moves the ball.
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
 - Floating-controller opacity is configurable from 10% to 100% with a Settings slider and defaults to 50%; the same value is applied to both the RDP ball and its hover session popup.
+- The floating controller remains enabled by default and can be hidden or shown from Settings at runtime without restarting the application.
+- Right-clicking the floating ball opens an independent custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu does not resize, reshape, or replace the 64px floating-ball window.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
 - The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window.
@@ -59,12 +61,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.7`.
+- Push a matching SemVer tag such as `v0.2.8`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.8 2026-08-23 02:42:00
+
+- Made the existing `Show floating controller` setting fully runtime-aware while keeping its default enabled: the ball, hover list and custom menu windows are created once, and saving the setting hides or restores the controller without requiring an application restart.
+- Added a right-click menu as a completely separate GPUI popup window rather than a native `TrackPopupMenu`. It provides `Show main window`, `Close floating controller`, and `Exit`; closing the controller also persists the floating setting as disabled so it can be explicitly re-enabled from Settings.
+- Preserved the v0.2.7 floating-ball geometry unchanged: the original 64×64 GPUI window options, native elliptical region configuration, topmost behavior and manual drag sizing/position logic are not resized or replaced by the menu implementation.
 
 ### version 0.2.7 2026-08-23 00:48:00
 

@@ -4,9 +4,10 @@ use crate::{
     platform::{self, RuntimeSettings, WindowSnapshot},
 };
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, ParentElement, PathPromptOptions, Render,
-    SharedString, StatefulInteractiveElement, Styled, Timer, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
+    App, AppContext, Bounds, Context, IntoElement, MouseButton, ParentElement, PathPromptOptions,
+    Render, SharedString, StatefulInteractiveElement, Styled, Timer, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
+    px, rgb, size,
 };
 use gpui_component::{
     Root, WindowExt,
@@ -29,6 +30,12 @@ const PANEL: u32 = 0x172033;
 const TEXT: u32 = 0xe5e7eb;
 const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
+
+const FLOATING_COLLAPSED_WIDTH: i32 = 56;
+const FLOATING_COLLAPSED_HEIGHT: i32 = 56;
+const FLOATING_EXPANDED_WIDTH: i32 = 360;
+const FLOATING_TAB_HEIGHT: i32 = 38;
+const FLOATING_MAX_TABS: usize = 9;
 
 pub struct AppState {
     pub paths: AppPaths,
@@ -252,6 +259,7 @@ impl ManagerView {
             let draft_for_float = Arc::clone(&draft);
             let draft_for_tabs = Arc::clone(&draft);
             let draft_for_hotkeys = Arc::clone(&draft);
+            let draft_for_tray = Arc::clone(&draft);
             let draft_for_keepalive = Arc::clone(&draft);
             let draft_for_input = Arc::clone(&draft);
             let draft_for_ok = Arc::clone(&draft);
@@ -298,6 +306,16 @@ impl ManagerView {
                                 .on_click(move |checked, _, _| {
                                     if let Ok(mut value) = draft_for_hotkeys.write() {
                                         value.global_hotkeys = *checked;
+                                    }
+                                }),
+                        )
+                        .child(
+                            Checkbox::new("close-to-tray")
+                                .label("Close main window to system tray")
+                                .checked(current.close_to_tray)
+                                .on_click(move |checked, _, _| {
+                                    if let Ok(mut value) = draft_for_tray.write() {
+                                        value.close_to_tray = *checked;
                                     }
                                 }),
                         )
@@ -615,6 +633,8 @@ impl Render for ManagerView {
 pub struct FloatingController {
     state: Arc<RwLock<AppState>>,
     hovered: bool,
+    native_ready: bool,
+    last_native_size: Option<(i32, i32)>,
 }
 
 impl FloatingController {
@@ -634,12 +654,15 @@ impl FloatingController {
         Self {
             state,
             hovered: false,
+            native_ready: false,
+            last_native_size: None,
         }
     }
 }
 
 impl Render for FloatingController {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_window_title(platform::FLOATING_WINDOW_TITLE);
         let (settings, windows) = self
             .state
             .read()
@@ -658,8 +681,26 @@ impl Render for FloatingController {
             })
             .unwrap_or_else(|_| (AppSettings::default(), Vec::new()));
         let show_tabs = settings.always_show_tabs || self.hovered;
+        let visible_rows = windows.len().clamp(1, FLOATING_MAX_TABS) as i32;
+        let desired_size = if show_tabs {
+            (
+                FLOATING_EXPANDED_WIDTH,
+                FLOATING_COLLAPSED_HEIGHT + 8 + visible_rows * FLOATING_TAB_HEIGHT,
+            )
+        } else {
+            (FLOATING_COLLAPSED_WIDTH, FLOATING_COLLAPSED_HEIGHT)
+        };
 
-        let mut tabs = v_flex().gap_1().mt_2();
+        if !self.native_ready && platform::configure_floating_window_topmost().is_ok() {
+            self.native_ready = true;
+        }
+        if self.last_native_size != Some(desired_size)
+            && platform::resize_floating_window(desired_size.0, desired_size.1).is_ok()
+        {
+            self.last_native_size = Some(desired_size);
+        }
+
+        let mut tabs = v_flex().gap_1().mt_2().w_full().items_end();
         if show_tabs {
             if windows.is_empty() {
                 tabs = tabs.child(
@@ -668,24 +709,24 @@ impl Render for FloatingController {
                         .py_2()
                         .rounded_md()
                         .bg(rgb(PANEL))
-                        .opacity(0.85)
+                        .opacity(0.92)
                         .text_sm()
                         .text_color(rgb(MUTED))
                         .child("No MSTSC windows"),
                 );
             }
-            for (index, mstsc) in windows.iter().enumerate() {
+            for (index, mstsc) in windows.iter().take(FLOATING_MAX_TABS).enumerate() {
                 let hwnd = mstsc.hwnd;
                 let label = format!("{}  {}", index + 1, mstsc.title);
                 tabs = tabs.child(
                     div()
                         .id(("mstsc-tab", index))
-                        .max_w(px(330.))
+                        .max_w(px(344.))
                         .px_3()
                         .py_2()
                         .rounded_md()
                         .bg(rgb(PANEL))
-                        .opacity(0.88)
+                        .opacity(0.92)
                         .text_sm()
                         .text_color(rgb(TEXT))
                         .cursor_pointer()
@@ -699,6 +740,8 @@ impl Render for FloatingController {
 
         v_flex()
             .id("floating-controller")
+            .size_full()
+            .p(px(4.))
             .items_end()
             .on_hover(cx.listener(|view, hovered, _, cx| {
                 view.hovered = *hovered;
@@ -716,6 +759,10 @@ impl Render for FloatingController {
                     .flex()
                     .items_center()
                     .justify_center()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {
+                        let _ = platform::begin_floating_drag();
+                    })
                     .child("RDP"),
             )
             .child(tabs)
@@ -725,7 +772,15 @@ impl Render for FloatingController {
 pub fn main_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(860.), px(620.)), cx)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        titlebar: Some(gpui::TitlebarOptions {
+            title: Some(platform::MAIN_WINDOW_TITLE.into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        }),
+        is_movable: true,
+        is_resizable: true,
+        is_minimizable: true,
+        window_min_size: Some(size(px(640.), px(480.))),
         ..Default::default()
     }
 }
@@ -735,8 +790,8 @@ pub fn floating_window_options(cx: &App) -> WindowOptions {
         .primary_display()
         .map(|display| display.bounds())
         .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), size(px(1920.), px(1080.))));
-    let width = px(360.);
-    let height = px(560.);
+    let width = px(FLOATING_COLLAPSED_WIDTH as f32);
+    let height = px(FLOATING_COLLAPSED_HEIGHT as f32);
     let origin = point(
         display_bounds.origin.x + display_bounds.size.width - width - px(24.),
         display_bounds.origin.y + px(100.),

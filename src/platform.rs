@@ -10,33 +10,50 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM, WPARAM},
+        Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Security::Credentials::{
             CRED_PERSIST_ENTERPRISE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         },
-        System::Threading::{
-            OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-            QueryFullProcessImageNameW,
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Threading::{
+                AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            },
         },
         UI::{
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_SHIFT, RegisterHotKey, UnregisterHotKey, VIRTUAL_KEY,
-                VK_LEFT, VK_RIGHT,
+                MOD_ALT, MOD_CONTROL, MOD_SHIFT, RegisterHotKey, ReleaseCapture, SetFocus,
+                UnregisterHotKey, VIRTUAL_KEY, VK_LEFT, VK_RIGHT,
+            },
+            Shell::{
+                NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+                Shell_NotifyIconW,
             },
             WindowsAndMessaging::{
-                EnumWindows, GetForegroundWindow, GetMessageW, GetWindowTextLengthW,
-                GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MSG, PostMessageW,
-                SW_RESTORE, SetForegroundWindow, ShowWindow, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP,
-                WM_MOUSEMOVE,
+                BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow,
+                DispatchMessageW, EnumWindows, FindWindowW, GetForegroundWindow, GetMessageW,
+                GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+                HTCAPTION, HWND_MESSAGE, HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW,
+                MSG, PostMessageW, RegisterClassW, SW_HIDE, SW_RESTORE, SWP_NOACTIVATE,
+                SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowPos,
+                ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_HOTKEY,
+                WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE,
+                WM_NCLBUTTONDOWN, WNDCLASSW,
             },
         },
     },
-    core::{BOOL, PWSTR},
+    core::{BOOL, HSTRING, PCWSTR, PWSTR},
 };
+
+pub const MAIN_WINDOW_TITLE: &str = "mstsc-mgr";
+pub const FLOATING_WINDOW_TITLE: &str = "mstsc-mgr-floating";
 
 const HOTKEY_NUM_BASE: i32 = 0x5100;
 const HOTKEY_PREVIOUS: i32 = 0x5200;
 const HOTKEY_NEXT: i32 = 0x5201;
+const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 1;
+const TRAY_ICON_ID: u32 = 1;
 
 pub type WindowSnapshot = Arc<RwLock<Vec<MstscWindow>>>;
 pub type RuntimeSettings = Arc<RwLock<AppSettings>>;
@@ -172,16 +189,220 @@ fn window_title(hwnd: HWND) -> String {
 }
 
 pub fn activate_window(hwnd: isize) -> Result<()> {
-    let hwnd = HWND(hwnd as *mut core::ffi::c_void);
-    // SAFETY: HWND originated from EnumWindows. Calls are best-effort window state operations.
+    activate_hwnd(HWND(hwnd as *mut core::ffi::c_void))
+}
+
+fn activate_hwnd(hwnd: HWND) -> Result<()> {
+    // SAFETY: hwnd is a top-level window handle discovered by EnumWindows/FindWindowW. Thread input
+    // queues are attached only for the duration of this activation attempt and detached below.
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
-        if SetForegroundWindow(hwnd).as_bool() {
-            Ok(())
+
+        let current_thread = GetCurrentThreadId();
+        let foreground = GetForegroundWindow();
+        let foreground_thread = if foreground.0.is_null() {
+            0
         } else {
-            bail!("SetForegroundWindow was rejected by Windows foreground policy")
+            GetWindowThreadProcessId(foreground, None)
+        };
+        let target_thread = GetWindowThreadProcessId(hwnd, None);
+
+        let attached_foreground = foreground_thread != 0
+            && foreground_thread != current_thread
+            && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
+        let attached_target = target_thread != 0
+            && target_thread != current_thread
+            && target_thread != foreground_thread
+            && AttachThreadInput(current_thread, target_thread, true).as_bool();
+
+        let result = (|| -> Result<()> {
+            BringWindowToTop(hwnd).context("BringWindowToTop failed")?;
+            if !SetForegroundWindow(hwnd).as_bool() {
+                bail!("SetForegroundWindow was rejected by Windows foreground policy");
+            }
+            let _ = SetFocus(Some(hwnd));
+            Ok(())
+        })();
+
+        if attached_target {
+            let _ = AttachThreadInput(current_thread, target_thread, false);
+        }
+        if attached_foreground {
+            let _ = AttachThreadInput(current_thread, foreground_thread, false);
+        }
+        result
+    }
+}
+
+fn find_window_by_title(title: &str) -> Result<HWND> {
+    let title = HSTRING::from(title);
+    // SAFETY: FindWindowW only reads the supplied UTF-16 title and returns a borrowed OS handle.
+    unsafe { FindWindowW(None, &title).context("FindWindowW failed") }
+}
+
+pub fn hide_main_window() -> Result<()> {
+    let hwnd = find_window_by_title(MAIN_WINDOW_TITLE)?;
+    // SAFETY: hwnd is the application's current main top-level window.
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+    Ok(())
+}
+
+pub fn show_main_window() -> Result<()> {
+    let hwnd = find_window_by_title(MAIN_WINDOW_TITLE)?;
+    activate_hwnd(hwnd)
+}
+
+pub fn configure_floating_window_topmost() -> Result<()> {
+    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
+    // SAFETY: hwnd is the floating controller window; flags preserve its size and position and do
+    // not activate it while promoting it to the topmost Z band.
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos topmost failed")?;
+    }
+    Ok(())
+}
+
+pub fn resize_floating_window(width: i32, height: i32) -> Result<()> {
+    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
+    let mut rect = RECT::default();
+    // SAFETY: hwnd is the floating controller; rect is valid writable storage. SetWindowPos keeps
+    // the current right/top anchor while changing only the desired native popup bounds.
+    unsafe {
+        GetWindowRect(hwnd, &mut rect).context("GetWindowRect failed")?;
+        let x = rect.right.saturating_sub(width);
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            x,
+            rect.top,
+            width,
+            height,
+            SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos resize failed")?;
+    }
+    Ok(())
+}
+
+pub fn begin_floating_drag() -> Result<()> {
+    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
+    // SAFETY: hwnd is the floating controller. Releasing capture and sending a non-client caption
+    // press delegates the drag loop to Windows, which GPUI 0.2.x does not implement on Windows.
+    unsafe {
+        let _ = ReleaseCapture();
+        let _ = SendMessageW(
+            hwnd,
+            WM_NCLBUTTONDOWN,
+            Some(WPARAM(HTCAPTION as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    Ok(())
+}
+
+pub fn start_tray_worker() {
+    thread::spawn(|| {
+        if let Err(error) = tray_message_loop() {
+            tracing::error!(%error, "system tray worker stopped");
+        }
+    });
+}
+
+fn tray_message_loop() -> Result<()> {
+    // SAFETY: this worker owns the registered window class, message-only HWND, tray icon and message
+    // loop for their full lifetime. All pointers reference static/stack data kept alive per call.
+    unsafe {
+        let module = GetModuleHandleW(None).context("GetModuleHandleW failed")?;
+        let instance: HINSTANCE = module.into();
+        let class_name = windows::core::w!("MstscMgrTrayWindow");
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(tray_window_proc),
+            hInstance: instance,
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        if RegisterClassW(&class) == 0 {
+            bail!("RegisterClassW failed for tray window");
+        }
+
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            class_name,
+            windows::core::w!("mstsc-mgr tray"),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(instance),
+            None,
+        )
+        .context("CreateWindowExW failed for tray window")?;
+
+        let icon = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        let mut data = NOTIFYICONDATAW {
+            cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: TRAY_ICON_ID,
+            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            uCallbackMessage: TRAY_CALLBACK_MESSAGE,
+            hIcon: icon,
+            ..Default::default()
+        };
+        let tip = wide_null("mstsc-mgr");
+        let tip_len = tip.len().min(data.szTip.len());
+        data.szTip[..tip_len].copy_from_slice(&tip[..tip_len]);
+        if !Shell_NotifyIconW(NIM_ADD, &data).as_bool() {
+            let _ = DestroyWindow(hwnd);
+            bail!("Shell_NotifyIconW(NIM_ADD) failed");
+        }
+
+        let mut message = MSG::default();
+        loop {
+            let code = GetMessageW(&mut message, None, 0, 0);
+            if code.0 <= 0 {
+                break;
+            }
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+
+        let _ = Shell_NotifyIconW(NIM_DELETE, &data);
+        let _ = DestroyWindow(hwnd);
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn tray_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == TRAY_CALLBACK_MESSAGE {
+        match lparam.0 as u32 {
+            WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+                let _ = show_main_window();
+                return LRESULT(0);
+            }
+            _ => {}
         }
     }
+    // SAFETY: unhandled messages are forwarded to the default window procedure for this valid HWND.
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
 pub fn start_window_watcher(snapshot: WindowSnapshot) {

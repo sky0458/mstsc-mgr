@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 #[cfg(not(windows))]
 fn main() {
     eprintln!("mstsc-mgr supports Windows 10 and newer only.");
@@ -44,7 +46,29 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or(true);
 
         if let Err(error) = cx.open_window(ui::main_window_options(cx), |window, cx| {
-            let view = cx.new(|_| ManagerView::new(manager_state));
+            window.set_window_title(platform::MAIN_WINDOW_TITLE);
+            let close_state = Arc::clone(&manager_state);
+            window.on_window_should_close(cx, move |_, app| {
+                let close_to_tray = close_state
+                    .read()
+                    .map(|guard| guard.settings.close_to_tray)
+                    .unwrap_or(true);
+                if close_to_tray {
+                    match platform::hide_main_window() {
+                        Ok(()) => false,
+                        Err(error) => {
+                            tracing::error!(%error, "failed to hide main window to tray");
+                            app.quit();
+                            true
+                        }
+                    }
+                } else {
+                    app.quit();
+                    true
+                }
+            });
+
+            let view = cx.new(|_| ManagerView::new(Arc::clone(&manager_state)));
             cx.new(|cx| Root::new(view, window, cx))
         }) {
             tracing::error!(%error, "failed to open main window");
@@ -52,10 +76,12 @@ fn main() -> anyhow::Result<()> {
             return;
         }
 
+        platform::start_tray_worker();
+
         if floating_enabled
             && let Err(error) = cx.open_window(ui::floating_window_options(cx), |window, cx| {
-                let view = cx.new(|cx| FloatingController::new(floating_state, cx));
-                cx.new(|cx| Root::new(view, window, cx))
+                window.set_window_title(platform::FLOATING_WINDOW_TITLE);
+                cx.new(|cx| FloatingController::new(floating_state, cx))
             })
         {
             tracing::error!(%error, "failed to open floating controller");

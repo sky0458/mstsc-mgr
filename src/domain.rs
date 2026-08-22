@@ -64,6 +64,8 @@ pub struct AppSettings {
     pub always_show_tabs: bool,
     #[serde(default = "default_true")]
     pub global_hotkeys: bool,
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
     #[serde(default)]
     pub keepalive_enabled: bool,
     #[serde(default = "default_keepalive_seconds")]
@@ -78,6 +80,7 @@ impl Default for AppSettings {
             floating_controller: true,
             always_show_tabs: false,
             global_hotkeys: true,
+            close_to_tray: true,
             keepalive_enabled: false,
             keepalive_interval_seconds: default_keepalive_seconds(),
             keepalive_input: KeepAliveInput::MouseMove,

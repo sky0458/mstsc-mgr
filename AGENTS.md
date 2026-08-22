@@ -73,5 +73,6 @@ Rules:
 1. Use Asia/Taipei local time.
 2. A version entry describes the code in the same commit/PR.
 3. Never rewrite an older entry to hide history; add a new version for later development.
-4. Patch version for fixes, minor version for backward-compatible features, major version for incompatible format/behavior changes.
-5. Release tag must match Cargo package version (`vX.Y.Z` ↔ `X.Y.Z`).
+4. Entries must be ordered in reverse chronological order (newest first). Insert each new version immediately below `## Development Log`; never append new entries at the bottom.
+5. Patch version for fixes, minor version for backward-compatible features, major version for incompatible format/behavior changes.
+6. Release tag must match Cargo package version (`vX.Y.Z` ↔ `X.Y.Z`).

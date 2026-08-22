@@ -43,9 +43,23 @@ cargo build --release
 
 ## Release
 
-Push a SemVer tag matching `Cargo.toml`, for example `v0.1.4`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+
+Two release paths are supported:
+
+- Push a matching SemVer tag such as `v0.1.5`.
+- Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
+
+Entries are ordered newest to oldest.
+
+### version 0.1.5 2026-08-22 17:31:11
+
+- Fixed the final Rust 1.98 Clippy diagnostics by deriving `Default` for `KeepAliveInput` and removing unnecessary mutable WinAPI input references.
+- Restored the strict `cargo fmt --all -- --check` CI gate before merge/release.
+- Made reverse-chronological README logging an explicit contributor rule: every new version is inserted at the top of Development Log.
+- Extended the release workflow so an explicit `release:` merge commit on `main` can publish the exact merged Cargo version while preserving normal SemVer-tag releases.
 
 ### version 0.1.4 2026-08-22 17:24:05
 

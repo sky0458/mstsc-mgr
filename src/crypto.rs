@@ -14,7 +14,7 @@ pub fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
         bail!("refusing to encrypt an empty payload");
     }
 
-    let mut input = CRYPT_INTEGER_BLOB {
+    let input = CRYPT_INTEGER_BLOB {
         cbData: u32::try_from(cleartext.len()).context("payload too large")?,
         pbData: cleartext.as_ptr().cast_mut(),
     };
@@ -24,7 +24,7 @@ pub fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
     // null. Windows allocates output with LocalAlloc and we copy it before LocalFree.
     unsafe {
         CryptProtectData(
-            &mut input,
+            &input,
             None,
             None,
             None,
@@ -43,7 +43,7 @@ pub fn unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
         bail!("encrypted payload is empty");
     }
 
-    let mut input = CRYPT_INTEGER_BLOB {
+    let input = CRYPT_INTEGER_BLOB {
         cbData: u32::try_from(ciphertext.len()).context("payload too large")?,
         pbData: ciphertext.as_ptr().cast_mut(),
     };
@@ -54,7 +54,7 @@ pub fn unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
     // description are allocated by Windows and released below with LocalFree.
     unsafe {
         CryptUnprotectData(
-            &mut input,
+            &input,
             Some(&mut description),
             None,
             None,

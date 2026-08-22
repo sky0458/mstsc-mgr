@@ -48,17 +48,12 @@ const fn default_rdp_port() -> u16 {
     3389
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum KeepAliveInput {
+    #[default]
     MouseMove,
     ShiftKey,
-}
-
-impl Default for KeepAliveInput {
-    fn default() -> Self {
-        Self::MouseMove
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

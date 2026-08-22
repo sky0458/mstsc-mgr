@@ -70,7 +70,7 @@ fn write_rdp_credential(connection: &SavedConnection) -> Result<()> {
         .and_then(|len| u32::try_from(len).ok())
         .context("password is too large")?;
 
-    let mut credential = CREDENTIALW {
+    let credential = CREDENTIALW {
         Type: CRED_TYPE_GENERIC,
         TargetName: PWSTR(target.as_ptr().cast_mut()),
         CredentialBlobSize: password_bytes,
@@ -82,7 +82,7 @@ fn write_rdp_credential(connection: &SavedConnection) -> Result<()> {
 
     // SAFETY: all pointers in CREDENTIALW refer to buffers that remain alive for the duration of
     // CredWriteW. Password length is supplied in bytes as required by the API.
-    unsafe { CredWriteW(&mut credential, 0).context("CredWriteW failed")? };
+    unsafe { CredWriteW(&credential, 0).context("CredWriteW failed")? };
     Ok(())
 }
 

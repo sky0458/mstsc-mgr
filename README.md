@@ -8,12 +8,15 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Save multiple RDP connections with host, port, username, password and optional MSTSC arguments.
 - Passwords and the local vault are encrypted with Windows DPAPI; plaintext secrets are not written to disk.
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
-- Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray and keepalive behavior.
+- Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray, diagnostic logging and keepalive behavior.
+- Diagnostic logging defaults to enabled and writes `mstsc-mgr.log` next to `mstsc-mgr.exe` when that directory is writable. The Settings switch can stop subsequent log writes immediately; passwords, decrypted vault data and credential blobs are never logged.
 - Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
-- Compact topmost transparent floating RDP controller. The collapsed native window leaves enough transparent safety padding around the circular RDP ball so it is not clipped by Windows popup bounds; the ball can be dragged anywhere on the desktop.
-- Floating expansion is cursor-position driven instead of directly toggling native bounds from GPUI hover enter/leave callbacks. This prevents resize-induced hover feedback loops and keeps the MSTSC list stable long enough to select a session.
+- The floating controller is now two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate topmost MSTSC-session list popup. Showing the list never resizes or moves the ball.
+- The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
+- Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
+- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
-- Click a floating tab to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
+- Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
 - Global switching operates on that complete system-wide set of visible MSTSC windows:
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
   - `Ctrl+Alt+Shift+Left/Right`: cycle through current MSTSC windows with wrap-around.
@@ -27,6 +30,10 @@ Local data is stored under `%LOCALAPPDATA%\mstsc-mgr`:
 
 - `settings.json`: non-secret settings.
 - `vault.dpapi`: DPAPI-encrypted serialized connection vault.
+
+Portable diagnostic output is written beside the executable when enabled:
+
+- `mstsc-mgr.log`: runtime diagnostics only; no passwords, decrypted vault JSON or credential blobs.
 
 When connecting, the password is copied into Windows Credential Manager for target `TERMSRV/<host>` through `CredWriteW`. Only `/v:<host[:port]>` and optional user-supplied MSTSC switches are passed to `mstsc.exe`.
 
@@ -49,12 +56,21 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.1`.
+- Push a matching SemVer tag such as `v0.2.2`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.2 2026-08-22 20:48:33
+
+- Added `mstsc-mgr.log` in the executable directory as the default diagnostic log target and added a Settings switch that can stop subsequent log writes immediately. Logging records startup, MSTSC snapshot count changes, activation attempts, keepalive activity, hotkey registration, floating-list visibility/dragging and tray lifecycle without logging passwords or decrypted vault contents.
+- Replaced the combined resizable floating popup with two independent GPUI/Win32 top-level components: a fixed floating ball HWND and a separate fixed-size MSTSC-list HWND. The list can appear/disappear without changing the ball window bounds, eliminating the left/right jumping caused by resize anchoring.
+- Applied a native Win32 elliptical window region to the floating-ball HWND so the actual top-level window is circular, not merely a rounded element rendered inside a rectangular transparent popup.
+- Reworked hover behavior to poll the cursor across both independent windows with a 500ms leave grace. Moving from the ball into the list no longer collapses the list, and empty/non-empty session states use the same stable popup.
+- Replaced caption-message dragging with an explicit Win32 drag loop using global left-button state, cursor deltas and `SetWindowPos`, keeping the ball inside the virtual desktop and moving the separate list alongside it when visible.
+- Removed the obsolete combined `FloatingController` implementation from `ui.rs` and made the split floating architecture an explicit contributor constraint.
 
 ### version 0.2.1 2026-08-22 19:59:30
 

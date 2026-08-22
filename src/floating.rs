@@ -1,4 +1,4 @@
-use crate::{domain::AppSettings, platform, ui::AppState};
+use crate::{platform, ui::AppState};
 use gpui::{
     App, Bounds, Context, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Timer, Window, WindowBackgroundAppearance, WindowBounds,
@@ -32,6 +32,7 @@ pub struct FloatingBall {
 
 impl FloatingBall {
     pub fn new(state: Arc<RwLock<AppState>>, cx: &mut Context<Self>) -> Self {
+        let poll_state = Arc::clone(&state);
         cx.spawn(async move |weak, cx| {
             loop {
                 Timer::after(POINTER_POLL_INTERVAL).await;
@@ -39,17 +40,13 @@ impl FloatingBall {
                     break;
                 };
                 let pointer_inside = platform::cursor_in_floating_controls().unwrap_or(false);
-                let always_show = entity
-                    .read_with(cx, |view, _| {
-                        view.state
-                            .read()
-                            .ok()
-                            .and_then(|state| {
-                                state.runtime_settings.read().ok().map(|settings| {
-                                    settings.always_show_tabs && settings.floating_controller
-                                })
-                            })
-                            .unwrap_or(false)
+                let always_show = poll_state
+                    .read()
+                    .ok()
+                    .and_then(|state| {
+                        state.runtime_settings.read().ok().map(|settings| {
+                            settings.always_show_tabs && settings.floating_controller
+                        })
                     })
                     .unwrap_or(false);
 
@@ -280,12 +277,4 @@ pub fn initial_list_visibility(state: &Arc<RwLock<AppState>>) -> bool {
             })
         })
         .unwrap_or(false)
-}
-
-pub fn runtime_settings(state: &Arc<RwLock<AppState>>) -> AppSettings {
-    state
-        .read()
-        .ok()
-        .and_then(|state| state.runtime_settings.read().ok().map(|settings| settings.clone()))
-        .unwrap_or_default()
 }

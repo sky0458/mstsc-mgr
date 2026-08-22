@@ -1,6 +1,7 @@
 use crate::{
     config::{self, AppPaths},
     domain::{AppSettings, KeepAliveInput, SavedConnection, VaultPayload},
+    floating,
     platform::{self, RuntimeSettings, WindowSnapshot},
 };
 use gpui::{
@@ -15,6 +16,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement,
+    slider::{Slider, SliderState},
     v_flex,
 };
 use std::{
@@ -242,6 +244,13 @@ impl ManagerView {
                 .placeholder("60")
                 .default_value(settings.keepalive_interval_seconds.to_string())
         });
+        let opacity = cx.new(|_| {
+            SliderState::new()
+                .min(10.0)
+                .max(100.0)
+                .step(5.0)
+                .default_value(f32::from(settings.floating_opacity_percent))
+        });
         let draft = Arc::new(RwLock::new(settings));
         let manager = cx.entity().clone();
         let state = Arc::clone(&self.state);
@@ -256,6 +265,8 @@ impl ManagerView {
             let draft_for_input = Arc::clone(&draft);
             let draft_for_ok = Arc::clone(&draft);
             let interval_for_ok = interval.clone();
+            let opacity_for_view = opacity.clone();
+            let opacity_for_ok = opacity.clone();
             let state_for_ok = Arc::clone(&state);
             let manager_for_ok = manager.clone();
             let current = draft.read().map(|v| v.clone()).unwrap_or_default();
@@ -280,6 +291,17 @@ impl ManagerView {
                                         value.floating_controller = *checked;
                                     }
                                 }),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(rgb(MUTED))
+                                        .child("Floating controller opacity (10-100%, default 50%)"),
+                                )
+                                .child(Slider::new(&opacity_for_view)),
                         )
                         .child(
                             Checkbox::new("always-tabs")
@@ -366,6 +388,14 @@ impl ManagerView {
                     }
                     let mut next = draft_for_ok.read().map(|v| v.clone()).unwrap_or_default();
                     next.keepalive_interval_seconds = seconds;
+                    next.floating_opacity_percent = opacity_for_ok
+                        .read(app)
+                        .value()
+                        .start()
+                        .round()
+                        .clamp(10.0, 100.0) as u8;
+                    let floating_enabled = next.floating_controller;
+                    let always_show_tabs = next.always_show_tabs;
                     let result = state_for_ok
                         .write()
                         .map_err(|_| anyhow::anyhow!("state lock poisoned"))
@@ -378,6 +408,14 @@ impl ManagerView {
                         });
                     match result {
                         Ok(()) => {
+                            if let Err(error) = floating::set_controller_visible(floating_enabled) {
+                                tracing::error!(%error, "failed to apply floating controller setting");
+                            }
+                            if let Err(error) = platform::set_floating_list_visible(
+                                floating_enabled && always_show_tabs,
+                            ) {
+                                tracing::error!(%error, "failed to apply floating list setting");
+                            }
                             manager_for_ok.update(app, |view, cx| {
                                 view.set_status(
                                     "Settings saved; runtime switches apply immediately",

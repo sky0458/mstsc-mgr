@@ -43,9 +43,14 @@ cargo build --release
 
 ## Release
 
-Push a SemVer tag matching `Cargo.toml`, for example `v0.1.3`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+Push a SemVer tag matching `Cargo.toml`, for example `v0.1.4`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 ## Development Log
+
+### version 0.1.4 2026-08-22 17:24:05
+
+- Fixed the remaining GPUI compile error by importing `gpui_component::scroll::ScrollableElement`, which provides `overflow_y_scrollbar()` for `gpui::Div`.
+- No MSTSC discovery or switching behavior changed; the system-wide external-session guarantee introduced in 0.1.3 remains intact.
 
 ### version 0.1.3 2026-08-22 17:21:04
 

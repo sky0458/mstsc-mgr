@@ -15,6 +15,7 @@ use gpui_component::{
     dialog::DialogButtonProps,
     h_flex,
     input::{Input, InputState},
+    scroll::ScrollableElement,
     v_flex,
 };
 use std::{

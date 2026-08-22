@@ -1,6 +1,6 @@
 use crate::{domain::AppSettings, platform, ui::AppState};
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, MouseButton, ParentElement, Render,
+    App, Bounds, Context, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Timer, Window, WindowBackgroundAppearance, WindowBounds,
     WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
 };

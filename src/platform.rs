@@ -10,7 +10,7 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{BOOL, CloseHandle, HWND, LPARAM, WPARAM},
+        Foundation::{CloseHandle, HWND, LPARAM, WPARAM},
         Security::Credentials::{
             CRED_PERSIST_ENTERPRISE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         },
@@ -20,17 +20,18 @@ use windows::{
         },
         UI::{
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_SHIFT, VIRTUAL_KEY, VK_LEFT, VK_RIGHT,
+                MOD_ALT, MOD_CONTROL, MOD_SHIFT, RegisterHotKey, UnregisterHotKey, VIRTUAL_KEY,
+                VK_LEFT, VK_RIGHT,
             },
             WindowsAndMessaging::{
                 EnumWindows, GetForegroundWindow, GetMessageW, GetWindowTextLengthW,
                 GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MSG, PostMessageW,
-                RegisterHotKey, SW_RESTORE, SetForegroundWindow, ShowWindow, UnregisterHotKey,
-                WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_MOUSEMOVE,
+                SW_RESTORE, SetForegroundWindow, ShowWindow, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP,
+                WM_MOUSEMOVE,
             },
         },
     },
-    core::PWSTR,
+    core::{BOOL, PWSTR},
 };
 
 const HOTKEY_NUM_BASE: i32 = 0x5100;
@@ -225,11 +226,11 @@ fn post_keepalive(hwnd: isize, input: KeepAliveInput) {
     unsafe {
         match input {
             KeepAliveInput::MouseMove => {
-                let _ = PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), LPARAM(0));
             }
             KeepAliveInput::ShiftKey => {
-                let _ = PostMessageW(hwnd, WM_KEYDOWN, WPARAM(0x10), LPARAM(0));
-                let _ = PostMessageW(hwnd, WM_KEYUP, WPARAM(0x10), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_KEYDOWN, WPARAM(0x10), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_KEYUP, WPARAM(0x10), LPARAM(0));
             }
         }
     }

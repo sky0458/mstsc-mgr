@@ -178,9 +178,7 @@ impl ManagerView {
                         return false;
                     }
                     let Ok(port_value) = port_value.trim().parse::<u16>() else {
-                        manager.update(app, |view, cx| {
-                            view.set_status("Port must be 1-65535", cx)
-                        });
+                        manager.update(app, |view, cx| view.set_status("Port must be 1-65535", cx));
                         return false;
                     };
                     let save_result = state
@@ -503,8 +501,9 @@ impl Render for ManagerView {
                                     Ok(()) => {
                                         view.set_status(format!("Launching {}", launch.name), cx)
                                     }
-                                    Err(error) => view
-                                        .set_status(format!("Launch failed: {error:#}"), cx),
+                                    Err(error) => {
+                                        view.set_status(format!("Launch failed: {error:#}"), cx)
+                                    }
                                 }
                             })),
                     )
@@ -529,8 +528,9 @@ impl Render for ManagerView {
                                     });
                                 match result {
                                     Ok(()) => view.set_status("Connection deleted", cx),
-                                    Err(error) => view
-                                        .set_status(format!("Delete failed: {error:#}"), cx),
+                                    Err(error) => {
+                                        view.set_status(format!("Delete failed: {error:#}"), cx)
+                                    }
                                 }
                             })),
                     ),
@@ -558,11 +558,9 @@ impl Render for ManagerView {
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .child("mstsc-mgr"),
                                     )
-                                    .child(
-                                        div().text_sm().text_color(rgb(MUTED)).child(
-                                            "Native Rust + GPUI · RDM-style external MSTSC management",
-                                        ),
-                                    ),
+                                    .child(div().text_sm().text_color(rgb(MUTED)).child(
+                                        "Native Rust + GPUI · RDM-style external MSTSC management",
+                                    )),
                             )
                             .child(
                                 h_flex()
@@ -575,13 +573,11 @@ impl Render for ManagerView {
                                                 view.open_connection_editor(None, window, cx)
                                             })),
                                     )
-                                    .child(
-                                        Button::new("settings").label("Settings").on_click(
-                                            cx.listener(|view, _, window, cx| {
-                                                view.open_settings(window, cx)
-                                            }),
-                                        ),
-                                    ),
+                                    .child(Button::new("settings").label("Settings").on_click(
+                                        cx.listener(|view, _, window, cx| {
+                                            view.open_settings(window, cx)
+                                        }),
+                                    )),
                             ),
                     )
                     .child(
@@ -602,7 +598,7 @@ impl Render for ManagerView {
                                     })),
                             ),
                     )
-                    .child(div().flex_1().overflow_y_scroll().child(list))
+                    .child(div().flex_1().overflow_y_scrollbar().child(list))
                     .child(
                         div()
                             .text_sm()
@@ -622,13 +618,15 @@ pub struct FloatingController {
 
 impl FloatingController {
     pub fn new(state: Arc<RwLock<AppState>>, cx: &mut Context<Self>) -> Self {
-        cx.spawn(async move |weak, cx| loop {
-            Timer::after(Duration::from_millis(500)).await;
-            let Some(entity) = weak.upgrade() else {
-                break;
-            };
-            if entity.update(cx, |_, cx| cx.notify()).is_err() {
-                break;
+        cx.spawn(async move |weak, cx| {
+            loop {
+                Timer::after(Duration::from_millis(500)).await;
+                let Some(entity) = weak.upgrade() else {
+                    break;
+                };
+                if entity.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
             }
         })
         .detach();

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use windows::{
     Win32::{
-        Foundation::LocalFree,
+        Foundation::{HLOCAL, LocalFree},
         Security::Cryptography::{
             CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
         },
@@ -64,7 +64,7 @@ pub fn unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
         )
         .context("CryptUnprotectData failed")?;
         if !description.is_null() {
-            let _ = LocalFree(Some(description.0.cast()));
+            let _ = LocalFree(Some(HLOCAL(description.0.cast())));
         }
     }
 
@@ -81,7 +81,7 @@ fn copy_and_free_blob(blob: CRYPT_INTEGER_BLOB) -> Result<Vec<u8>> {
     unsafe {
         let slice = std::slice::from_raw_parts(blob.pbData, blob.cbData as usize);
         let bytes = slice.to_vec();
-        let _ = LocalFree(Some(blob.pbData.cast::<core::ffi::c_void>()));
+        let _ = LocalFree(Some(HLOCAL(blob.pbData.cast::<core::ffi::c_void>())));
         Ok(bytes)
     }
 }

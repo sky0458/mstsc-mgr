@@ -42,9 +42,16 @@ cargo build --release
 
 ## Release
 
-Push a SemVer tag matching `Cargo.toml`, for example `v0.1.1`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+Push a SemVer tag matching `Cargo.toml`, for example `v0.1.2`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 ## Development Log
+
+### version 0.1.2 2026-08-22 17:01:15
+
+- Fixed the first real Windows compile diagnostics: moved global hotkey APIs to `Win32::UI::Input::KeyboardAndMouse`, used `windows::core::BOOL` for the `EnumWindows` callback, and passed optional HWNDs to `PostMessageW`.
+- Corrected DPAPI `LocalFree` calls to use the typed `HLOCAL` wrapper required by `windows` 0.61.
+- Updated the GPUI scroll container to the 0.2.2 `overflow_y_scrollbar()` API.
+- Kept the temporary non-blocking format diagnostic while Windows CI validates the corrected Win32/GPUI API surface.
 
 ### version 0.1.1 2026-08-22 16:51:55
 

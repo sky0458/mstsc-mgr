@@ -61,12 +61,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.4`.
+- Push a matching SemVer tag such as `v0.2.5`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.5 2026-08-22 23:50:03
+
+- Restored the floating RDP ball to a strict 64×64 logical and native size before it is shown, preventing a hidden GPUI startup window size from being converted into the giant elliptical region seen in v0.2.4.
+- Moved the floating-ball native `TrackPopupMenu` call off the GPUI mouse-event thread and added `TPM_NONOTIFY | TPM_RETURNCMD`, avoiding native-menu command re-entry into the GPUI popup lifecycle.
+- Separated mouse actions explicitly: right-click propagation is stopped and only a left-button release can execute the normal show-main-window action, so selecting a floating-ball context-menu item no longer shares the click path or unexpectedly exits the application.
 
 ### version 0.2.4 2026-08-22 22:50:30
 

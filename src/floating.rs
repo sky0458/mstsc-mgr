@@ -24,7 +24,6 @@ const POINTER_LEAVE_GRACE: Duration = Duration::from_millis(500);
 const LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(350);
 
 pub struct FloatingBall {
-    state: Arc<RwLock<AppState>>,
     list_visible: bool,
     last_pointer_inside: Instant,
     native_ready: bool,
@@ -32,7 +31,6 @@ pub struct FloatingBall {
 
 impl FloatingBall {
     pub fn new(state: Arc<RwLock<AppState>>, cx: &mut Context<Self>) -> Self {
-        let poll_state = Arc::clone(&state);
         cx.spawn(async move |weak, cx| {
             loop {
                 Timer::after(POINTER_POLL_INTERVAL).await;
@@ -40,7 +38,7 @@ impl FloatingBall {
                     break;
                 };
                 let pointer_inside = platform::cursor_in_floating_controls().unwrap_or(false);
-                let always_show = poll_state
+                let always_show = state
                     .read()
                     .ok()
                     .and_then(|state| {
@@ -74,7 +72,6 @@ impl FloatingBall {
         .detach();
 
         Self {
-            state,
             list_visible: false,
             last_pointer_inside: Instant::now(),
             native_ready: false,

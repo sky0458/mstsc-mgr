@@ -18,9 +18,10 @@ fn main() -> anyhow::Result<()> {
     use std::sync::{Arc, RwLock};
 
     let state = Arc::new(RwLock::new(AppState::load()?));
-    let log_path = state.read().ok().and_then(|guard| {
-        logging::init(Arc::clone(&guard.runtime_settings))
-    });
+    let log_path = state
+        .read()
+        .ok()
+        .and_then(|guard| logging::init(Arc::clone(&guard.runtime_settings)));
     match log_path {
         Some(path) => tracing::info!(path = %path.display(), "diagnostic file logging initialized"),
         None => tracing::warn!("diagnostic log file could not be initialized"),

@@ -18,9 +18,10 @@ use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, POINT, WPARAM},
         UI::WindowsAndMessaging::{
-            AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, MF_SEPARATOR,
-            MF_STRING, PostMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SetForegroundWindow, ShowWindow,
-            TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_CLOSE,
+            AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, HWND_TOPMOST,
+            MF_SEPARATOR, MF_STRING, PostMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+            SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_NONOTIFY,
+            TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_CLOSE,
         },
     },
     core::HSTRING,
@@ -32,6 +33,7 @@ const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
 
 const FLOATING_BALL_SIZE: f32 = 64.0;
+const FLOATING_BALL_NATIVE_SIZE: i32 = 64;
 const FLOATING_LIST_WIDTH: f32 = 240.0;
 const FLOATING_LIST_BASE_HEIGHT: f32 = 48.0;
 const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
@@ -76,11 +78,27 @@ pub fn set_controller_visible(visible: bool) -> Result<()> {
     FLOATING_CONTROLLER_VISIBLE.store(visible, Ordering::SeqCst);
     let ball = find_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
     if visible {
-        // SAFETY: ball is the application's own floating top-level window.
+        // SAFETY: before the hidden GPUI popup is shown, force the native HWND back to the exact
+        // compact ball size. This prevents an early hidden-window layout from being used as the
+        // ellipse size on affected Windows environments.
+        unsafe {
+            SetWindowPos(
+                ball,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                FLOATING_BALL_NATIVE_SIZE,
+                FLOATING_BALL_NATIVE_SIZE,
+                SWP_NOMOVE | SWP_NOACTIVATE,
+            )
+            .context("SetWindowPos restore floating-ball size failed")?;
+        }
+        platform::configure_floating_ball_window()?;
+        // SAFETY: ball is the application's own floating top-level window and is already sized and
+        // configured before it becomes visible.
         unsafe {
             let _ = ShowWindow(ball, SW_SHOWNOACTIVATE);
         }
-        platform::configure_floating_ball_window()?;
     } else {
         let _ = platform::set_floating_list_visible(false);
         // SAFETY: ball is the application's own floating top-level window.
@@ -110,8 +128,9 @@ fn request_application_exit() -> Result<()> {
 
 fn show_floating_context_menu() -> Result<()> {
     let owner = find_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
-    // SAFETY: the popup menu is created/destroyed within this function and uses the live floating
-    // ball as its owner. TPM_RETURNCMD returns the selected command synchronously.
+    // SAFETY: the popup menu is created/destroyed entirely on this dedicated worker thread.
+    // TPM_NONOTIFY keeps menu command notifications out of the GPUI popup event loop, while
+    // TPM_RETURNCMD lets this worker execute the selected action after TrackPopupMenu returns.
     unsafe {
         let menu = CreatePopupMenu().context("CreatePopupMenu for floating ball failed")?;
         let result = (|| -> Result<()> {
@@ -144,7 +163,7 @@ fn show_floating_context_menu() -> Result<()> {
             let _ = SetForegroundWindow(owner);
             let command = TrackPopupMenu(
                 menu,
-                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
                 cursor.x,
                 cursor.y,
                 Some(0),
@@ -162,6 +181,14 @@ fn show_floating_context_menu() -> Result<()> {
         let _ = DestroyMenu(menu);
         result
     }
+}
+
+fn show_floating_context_menu_async() {
+    thread::spawn(|| {
+        if let Err(error) = show_floating_context_menu() {
+            tracing::error!(%error, "failed to show floating-ball context menu");
+        }
+    });
 }
 
 pub fn start_stable_window_watcher(snapshot: platform::WindowSnapshot) {
@@ -269,13 +296,14 @@ impl FloatingBall {
 impl Render for FloatingBall {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
+        window.resize(size(px(FLOATING_BALL_SIZE), px(FLOATING_BALL_SIZE)));
         if !self.native_ready && platform::configure_floating_ball_window().is_ok() {
             self.native_ready = true;
         }
         self.opacity = opacity_from_state(&self.state);
 
         div()
-            .id("floating-ball-v5")
+            .id("floating-ball-v6")
             .size_full()
             .rounded_full()
             .bg(rgb(ACCENT))
@@ -291,12 +319,11 @@ impl Render for FloatingBall {
                     tracing::error!(%error, "failed to begin floating-ball drag");
                 }
             })
-            .on_mouse_down(MouseButton::Right, |_, _, _| {
-                if let Err(error) = show_floating_context_menu() {
-                    tracing::error!(%error, "failed to show floating-ball context menu");
-                }
+            .on_mouse_down(MouseButton::Right, |_, _, cx| {
+                cx.stop_propagation();
+                show_floating_context_menu_async();
             })
-            .on_click(|_, _, _| {
+            .on_mouse_up(MouseButton::Left, |_, _, _| {
                 if let Err(error) = platform::handle_floating_ball_click() {
                     tracing::error!(%error, "failed to open main window from floating ball");
                 }
@@ -373,7 +400,7 @@ impl Render for FloatingList {
                 let label = format!("{}  {}", index + 1, mstsc.title);
                 rows = rows.child(
                     div()
-                        .id(("mstsc-list-row-v5", index))
+                        .id(("mstsc-list-row-v6", index))
                         .w_full()
                         .h(px(32.0))
                         .px_2()

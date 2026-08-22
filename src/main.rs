@@ -11,8 +11,9 @@ fn main() -> anyhow::Result<()> {
     use gpui_component::Root;
     use gpui_component_assets::Assets;
     use mstsc_mgr::{
+        floating::{self, FloatingController},
         platform,
-        ui::{self, AppState, FloatingController, ManagerView},
+        ui::{self, AppState, ManagerView},
     };
     use std::sync::{Arc, RwLock};
 
@@ -49,6 +50,11 @@ fn main() -> anyhow::Result<()> {
             window.set_window_title(platform::MAIN_WINDOW_TITLE);
             let close_state = Arc::clone(&manager_state);
             window.on_window_should_close(cx, move |_, app| {
+                if platform::take_force_exit_requested() {
+                    app.quit();
+                    return true;
+                }
+
                 let close_to_tray = close_state
                     .read()
                     .map(|guard| guard.settings.close_to_tray)
@@ -79,10 +85,11 @@ fn main() -> anyhow::Result<()> {
         platform::start_tray_worker();
 
         if floating_enabled
-            && let Err(error) = cx.open_window(ui::floating_window_options(cx), |window, cx| {
-                window.set_window_title(platform::FLOATING_WINDOW_TITLE);
-                cx.new(|cx| FloatingController::new(floating_state, cx))
-            })
+            && let Err(error) =
+                cx.open_window(floating::floating_window_options(cx), |window, cx| {
+                    window.set_window_title(platform::FLOATING_WINDOW_TITLE);
+                    cx.new(|cx| FloatingController::new(floating_state, cx))
+                })
         {
             tracing::error!(%error, "failed to open floating controller");
         }

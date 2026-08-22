@@ -236,8 +236,8 @@ impl FloatingBall {
                         }
                         let keep_visible = view.list_visible
                             && now.duration_since(view.last_pointer_inside) < POINTER_LEAVE_GRACE;
-                        let desired_visible = controller_visible
-                            && (always_show || pointer_inside || keep_visible);
+                        let desired_visible =
+                            controller_visible && (always_show || pointer_inside || keep_visible);
                         if desired_visible != view.list_visible
                             && platform::set_floating_list_visible(desired_visible).is_ok()
                         {

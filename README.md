@@ -10,14 +10,15 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
 - Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray and keepalive behavior.
 - Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
-- Compact topmost transparent floating RDP controller. The collapsed native window is only the size of the 48px ball plus padding; hovering expands the current system-wide MSTSC list, and the ball can be dragged anywhere on the desktop.
+- Compact topmost transparent floating RDP controller. The collapsed native window leaves enough transparent safety padding around the circular RDP ball so it is not clipped by Windows popup bounds; the ball can be dragged anywhere on the desktop.
+- Floating expansion is cursor-position driven instead of directly toggling native bounds from GPUI hover enter/leave callbacks. This prevents resize-induced hover feedback loops and keeps the MSTSC list stable long enough to select a session.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Click a floating tab to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
 - Global switching operates on that complete system-wide set of visible MSTSC windows:
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
   - `Ctrl+Alt+Shift+Left/Right`: cycle through current MSTSC windows with wrap-around.
 - Optional keepalive with a targeted `WM_MOUSEMOVE` or Shift key message sent only to enumerated MSTSC HWNDs. Because discovery is system-wide, keepalive currently also applies to externally launched MSTSC sessions. It does not move the physical mouse or steal foreground focus.
-- The main window uses the native Windows title bar and is movable/resizable. Closing it defaults to hiding it in the system tray; this behavior can be disabled in Settings, and clicking the tray icon restores the main window.
+- The main window uses the native Windows title bar and is movable/resizable. Closing it defaults to hiding it in the system tray; this behavior can be disabled in Settings. Left-clicking the tray icon restores the main window, and right-clicking opens a native menu with Open and Exit actions.
 - GitHub Actions CI on Windows and tagged release packaging.
 
 ## Security model
@@ -48,12 +49,19 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.0`.
+- Push a matching SemVer tag such as `v0.2.1`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.1 2026-08-22 19:59:30
+
+- Increased the floating popup safety margin and ball diameter so the complete RDP control is rendered inside the Windows client area as a true circle instead of being clipped into a rounded rectangle.
+- Replaced resize-on-hover feedback with cursor-position polling plus a short leave grace period. Expanding the native popup no longer immediately generates the opposite hover state, eliminating the repeated jump/flicker that made MSTSC rows impossible to select.
+- Kept the expanded window anchored to the ball and continued using the same system-wide MSTSC snapshot, so both the empty-state row and detected-session rows remain stable while the pointer moves from the ball into the list.
+- Added a native tray context menu on right-click with `Open mstsc-mgr` and `Exit`. Exit now bypasses the normal close-to-tray behavior and asks the GPUI main window to terminate cleanly.
 
 ### version 0.2.0 2026-08-22 18:48:00
 
@@ -82,7 +90,7 @@ Entries are ordered newest to oldest.
 - Verified that MSTSC discovery is already system-wide: `EnumWindows` scans the desktop, each owning PID is resolved to its process image, and any visible top-level window owned by `mstsc.exe` is included regardless of who launched it.
 - Confirmed that global numeric/cycle hotkeys consume this same system-wide snapshot, so manually launched, `.rdp`-launched, and third-party-launched MSTSC sessions participate in switching.
 - Added an explicit architecture constraint forbidding future implementations from filtering the global snapshot by saved connections or mstsc-mgr-owned PIDs.
-- Documented that keepalive currently consumes the same global MSTSC snapshot and therefore also applies to externally launched sessions when enabled.
+- Documented that keepalive currently consumes the same global MSTSC snapshot and therefore also applies to externally launched MSTSC sessions when enabled.
 
 ### version 0.1.2 2026-08-22 17:01:15
 

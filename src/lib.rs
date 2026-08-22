@@ -7,6 +7,8 @@ pub mod crypto;
 #[cfg(windows)]
 pub mod floating;
 #[cfg(windows)]
+pub mod logging;
+#[cfg(windows)]
 pub mod platform;
 #[cfg(windows)]
 pub mod ui;

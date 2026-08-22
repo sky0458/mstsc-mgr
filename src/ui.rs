@@ -4,10 +4,8 @@ use crate::{
     platform::{self, RuntimeSettings, WindowSnapshot},
 };
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, MouseButton, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Timer, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
-    px, rgb, size,
+    App, AppContext, Context, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
+    Styled, Window, WindowBounds, WindowOptions, div, px, rgb, size,
 };
 use gpui_component::{
     Root, WindowExt,
@@ -22,7 +20,6 @@ use gpui_component::{
 use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 
 const BG: u32 = 0x0f172a;
@@ -30,12 +27,6 @@ const PANEL: u32 = 0x172033;
 const TEXT: u32 = 0xe5e7eb;
 const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
-
-const FLOATING_COLLAPSED_WIDTH: i32 = 56;
-const FLOATING_COLLAPSED_HEIGHT: i32 = 56;
-const FLOATING_EXPANDED_WIDTH: i32 = 360;
-const FLOATING_TAB_HEIGHT: i32 = 38;
-const FLOATING_MAX_TABS: usize = 9;
 
 pub struct AppState {
     pub paths: AppPaths,
@@ -260,6 +251,7 @@ impl ManagerView {
             let draft_for_tabs = Arc::clone(&draft);
             let draft_for_hotkeys = Arc::clone(&draft);
             let draft_for_tray = Arc::clone(&draft);
+            let draft_for_logging = Arc::clone(&draft);
             let draft_for_keepalive = Arc::clone(&draft);
             let draft_for_input = Arc::clone(&draft);
             let draft_for_ok = Arc::clone(&draft);
@@ -316,6 +308,16 @@ impl ManagerView {
                                 .on_click(move |checked, _, _| {
                                     if let Ok(mut value) = draft_for_tray.write() {
                                         value.close_to_tray = *checked;
+                                    }
+                                }),
+                        )
+                        .child(
+                            Checkbox::new("diagnostic-logging")
+                                .label("Write diagnostic log file next to mstsc-mgr.exe")
+                                .checked(current.logging_enabled)
+                                .on_click(move |checked, _, _| {
+                                    if let Ok(mut value) = draft_for_logging.write() {
+                                        value.logging_enabled = *checked;
                                     }
                                 }),
                         )
@@ -630,145 +632,6 @@ impl Render for ManagerView {
     }
 }
 
-pub struct FloatingController {
-    state: Arc<RwLock<AppState>>,
-    hovered: bool,
-    native_ready: bool,
-    last_native_size: Option<(i32, i32)>,
-}
-
-impl FloatingController {
-    pub fn new(state: Arc<RwLock<AppState>>, cx: &mut Context<Self>) -> Self {
-        cx.spawn(async move |weak, cx| {
-            loop {
-                Timer::after(Duration::from_millis(500)).await;
-                let Some(entity) = weak.upgrade() else {
-                    break;
-                };
-                if entity.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
-        Self {
-            state,
-            hovered: false,
-            native_ready: false,
-            last_native_size: None,
-        }
-    }
-}
-
-impl Render for FloatingController {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        window.set_window_title(platform::FLOATING_WINDOW_TITLE);
-        let (settings, windows) = self
-            .state
-            .read()
-            .map(|state| {
-                let settings = state
-                    .runtime_settings
-                    .read()
-                    .map(|value| value.clone())
-                    .unwrap_or_default();
-                let windows = state
-                    .windows
-                    .read()
-                    .map(|value| value.clone())
-                    .unwrap_or_default();
-                (settings, windows)
-            })
-            .unwrap_or_else(|_| (AppSettings::default(), Vec::new()));
-        let show_tabs = settings.always_show_tabs || self.hovered;
-        let visible_rows = windows.len().clamp(1, FLOATING_MAX_TABS) as i32;
-        let desired_size = if show_tabs {
-            (
-                FLOATING_EXPANDED_WIDTH,
-                FLOATING_COLLAPSED_HEIGHT + 8 + visible_rows * FLOATING_TAB_HEIGHT,
-            )
-        } else {
-            (FLOATING_COLLAPSED_WIDTH, FLOATING_COLLAPSED_HEIGHT)
-        };
-
-        if !self.native_ready && platform::configure_floating_window_topmost().is_ok() {
-            self.native_ready = true;
-        }
-        if self.last_native_size != Some(desired_size)
-            && platform::resize_floating_window(desired_size.0, desired_size.1).is_ok()
-        {
-            self.last_native_size = Some(desired_size);
-        }
-
-        let mut tabs = v_flex().gap_1().mt_2().w_full().items_end();
-        if show_tabs {
-            if windows.is_empty() {
-                tabs = tabs.child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(rgb(PANEL))
-                        .opacity(0.92)
-                        .text_sm()
-                        .text_color(rgb(MUTED))
-                        .child("No MSTSC windows"),
-                );
-            }
-            for (index, mstsc) in windows.iter().take(FLOATING_MAX_TABS).enumerate() {
-                let hwnd = mstsc.hwnd;
-                let label = format!("{}  {}", index + 1, mstsc.title);
-                tabs = tabs.child(
-                    div()
-                        .id(("mstsc-tab", index))
-                        .max_w(px(344.))
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(rgb(PANEL))
-                        .opacity(0.92)
-                        .text_sm()
-                        .text_color(rgb(TEXT))
-                        .cursor_pointer()
-                        .on_click(move |_, _, _| {
-                            let _ = platform::activate_window(hwnd);
-                        })
-                        .child(label),
-                );
-            }
-        }
-
-        v_flex()
-            .id("floating-controller")
-            .size_full()
-            .p(px(4.))
-            .items_end()
-            .on_hover(cx.listener(|view, hovered, _, cx| {
-                view.hovered = *hovered;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .id("floating-ball")
-                    .w(px(48.))
-                    .h(px(48.))
-                    .rounded_full()
-                    .bg(rgb(ACCENT))
-                    .text_color(rgb(0x082f49))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, _| {
-                        let _ = platform::begin_floating_drag();
-                    })
-                    .child("RDP"),
-            )
-            .child(tabs)
-    }
-}
-
 pub fn main_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(860.), px(620.)), cx)),
@@ -781,34 +644,6 @@ pub fn main_window_options(cx: &App) -> WindowOptions {
         is_resizable: true,
         is_minimizable: true,
         window_min_size: Some(size(px(640.), px(480.))),
-        ..Default::default()
-    }
-}
-
-pub fn floating_window_options(cx: &App) -> WindowOptions {
-    let display_bounds = cx
-        .primary_display()
-        .map(|display| display.bounds())
-        .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), size(px(1920.), px(1080.))));
-    let width = px(FLOATING_COLLAPSED_WIDTH as f32);
-    let height = px(FLOATING_COLLAPSED_HEIGHT as f32);
-    let origin = point(
-        display_bounds.origin.x + display_bounds.size.width - width - px(24.),
-        display_bounds.origin.y + px(100.),
-    );
-    WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-            origin,
-            size(width, height),
-        ))),
-        titlebar: None,
-        focus: false,
-        show: true,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        is_resizable: false,
-        is_minimizable: false,
-        window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     }
 }

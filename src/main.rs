@@ -11,18 +11,22 @@ fn main() -> anyhow::Result<()> {
     use gpui_component::Root;
     use gpui_component_assets::Assets;
     use mstsc_mgr::{
-        floating::{self, FloatingController},
-        platform,
+        floating::{self, FloatingBall, FloatingList},
+        logging, platform,
         ui::{self, AppState, ManagerView},
     };
     use std::sync::{Arc, RwLock};
 
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .without_time()
-        .init();
-
     let state = Arc::new(RwLock::new(AppState::load()?));
+    let log_path = state
+        .read()
+        .ok()
+        .and_then(|guard| logging::init(Arc::clone(&guard.runtime_settings)));
+    match log_path {
+        Some(path) => tracing::info!(path = %path.display(), "diagnostic file logging initialized"),
+        None => tracing::warn!("diagnostic log file could not be initialized"),
+    }
+
     if let Ok(guard) = state.read() {
         platform::start_window_watcher(Arc::clone(&guard.windows));
         platform::start_keepalive_worker(
@@ -40,7 +44,8 @@ fn main() -> anyhow::Result<()> {
         gpui_component::init(cx);
 
         let manager_state = Arc::clone(&state);
-        let floating_state = Arc::clone(&state);
+        let floating_ball_state = Arc::clone(&state);
+        let floating_list_state = Arc::clone(&state);
         let floating_enabled = state
             .read()
             .map(|guard| guard.settings.floating_controller)
@@ -84,14 +89,37 @@ fn main() -> anyhow::Result<()> {
 
         platform::start_tray_worker();
 
-        if floating_enabled
-            && let Err(error) =
-                cx.open_window(floating::floating_window_options(cx), |window, cx| {
-                    window.set_window_title(platform::FLOATING_WINDOW_TITLE);
-                    cx.new(|cx| FloatingController::new(floating_state, cx))
-                })
-        {
-            tracing::error!(%error, "failed to open floating controller");
+        if floating_enabled {
+            if let Err(error) = cx.open_window(
+                floating::floating_ball_window_options(cx),
+                |window, cx| {
+                    window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
+                    cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
+                },
+            ) {
+                tracing::error!(%error, "failed to open floating ball");
+            }
+
+            if let Err(error) = cx.open_window(
+                floating::floating_list_window_options(cx),
+                |window, cx| {
+                    window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
+                    cx.new(|cx| FloatingList::new(floating_list_state, cx))
+                },
+            ) {
+                tracing::error!(%error, "failed to open floating MSTSC list");
+            }
+
+            if let Err(error) = platform::configure_floating_ball_window() {
+                tracing::warn!(%error, "floating ball native configuration will retry during render");
+            }
+            if let Err(error) = platform::configure_floating_list_window() {
+                tracing::warn!(%error, "floating list native configuration will retry during render");
+            }
+            let initial_visible = floating::initial_list_visibility(&state);
+            if let Err(error) = platform::set_floating_list_visible(initial_visible) {
+                tracing::warn!(%error, "failed to apply initial floating-list visibility");
+            }
         }
 
         cx.activate(true);

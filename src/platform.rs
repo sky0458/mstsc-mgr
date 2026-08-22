@@ -14,6 +14,7 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+        Graphics::Gdi::{CreateEllipticRgn, SetWindowRgn},
         Security::Credentials::{
             CRED_PERSIST_ENTERPRISE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         },
@@ -26,8 +27,8 @@ use windows::{
         },
         UI::{
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_SHIFT, RegisterHotKey, ReleaseCapture, SetFocus,
-                UnregisterHotKey, VIRTUAL_KEY, VK_LEFT, VK_RIGHT,
+                GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_SHIFT, RegisterHotKey, SetFocus,
+                UnregisterHotKey, VIRTUAL_KEY, VK_LBUTTON, VK_LEFT, VK_RIGHT,
             },
             Shell::{
                 NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -36,15 +37,16 @@ use windows::{
             WindowsAndMessaging::{
                 AppendMenuW, BringWindowToTop, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
                 DestroyMenu, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowW,
-                GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowRect,
-                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HTCAPTION,
-                HWND_MESSAGE, HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW,
-                MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, SW_HIDE, SW_RESTORE,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetForegroundWindow,
-                SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu,
-                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
-                WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE,
-                WM_NCLBUTTONDOWN, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+                GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowRect,
+                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HWND_MESSAGE,
+                HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW, MF_SEPARATOR, MF_STRING,
+                MSG, PostMessageW, RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos,
+                ShowWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+                WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_HOTKEY, WM_KEYDOWN,
+                WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NULL, WM_RBUTTONUP,
+                WNDCLASSW,
             },
         },
     },
@@ -52,7 +54,8 @@ use windows::{
 };
 
 pub const MAIN_WINDOW_TITLE: &str = "mstsc-mgr";
-pub const FLOATING_WINDOW_TITLE: &str = "mstsc-mgr-floating";
+pub const FLOATING_BALL_WINDOW_TITLE: &str = "mstsc-mgr-floating-ball";
+pub const FLOATING_LIST_WINDOW_TITLE: &str = "mstsc-mgr-floating-list";
 
 const HOTKEY_NUM_BASE: i32 = 0x5100;
 const HOTKEY_PREVIOUS: i32 = 0x5200;
@@ -61,8 +64,11 @@ const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
 const TRAY_MENU_OPEN: u16 = 1001;
 const TRAY_MENU_EXIT: u16 = 1002;
+const FLOATING_LIST_GAP: i32 = 10;
+const DRAG_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 static FORCE_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static FLOATING_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub type WindowSnapshot = Arc<RwLock<Vec<MstscWindow>>>;
 pub type RuntimeSettings = Arc<RwLock<AppSettings>>;
@@ -71,6 +77,7 @@ pub fn launch_connection(connection: &SavedConnection) -> Result<()> {
     if connection.host.trim().is_empty() {
         bail!("host is required");
     }
+    tracing::info!(host = %connection.host, port = connection.port, "launching MSTSC connection");
     if !connection.username.is_empty() && !connection.password.is_empty() {
         write_rdp_credential(connection)?;
     }
@@ -198,6 +205,7 @@ fn window_title(hwnd: HWND) -> String {
 }
 
 pub fn activate_window(hwnd: isize) -> Result<()> {
+    tracing::info!(hwnd, "activating MSTSC window");
     activate_hwnd(HWND(hwnd as *mut core::ffi::c_void))
 }
 
@@ -279,10 +287,11 @@ fn request_force_exit() -> Result<()> {
     Ok(())
 }
 
-pub fn configure_floating_window_topmost() -> Result<()> {
-    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
-    // SAFETY: hwnd is the floating controller window; flags preserve its size and position and do
-    // not activate it while promoting it to the topmost Z band.
+pub fn configure_floating_ball_window() -> Result<()> {
+    let hwnd = find_window_by_title(FLOATING_BALL_WINDOW_TITLE)?;
+    let mut rect = RECT::default();
+    // SAFETY: hwnd is the GPUI floating-ball top-level window. The region is sized from the actual
+    // native window bounds and ownership transfers to Windows when SetWindowRgn succeeds.
     unsafe {
         SetWindowPos(
             hwnd,
@@ -293,61 +302,238 @@ pub fn configure_floating_window_topmost() -> Result<()> {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
-        .context("SetWindowPos topmost failed")?;
+        .context("SetWindowPos floating ball topmost failed")?;
+        GetWindowRect(hwnd, &mut rect).context("GetWindowRect floating ball failed")?;
+        let width = (rect.right - rect.left).max(1);
+        let height = (rect.bottom - rect.top).max(1);
+        let region = CreateEllipticRgn(0, 0, width, height);
+        if region.0.is_null() {
+            bail!("CreateEllipticRgn failed for floating ball");
+        }
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
+            bail!("SetWindowRgn failed for floating ball");
+        }
     }
+    tracing::info!("floating ball configured as native circular topmost window");
     Ok(())
 }
 
-pub fn resize_floating_window(width: i32, height: i32) -> Result<()> {
-    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
-    let mut rect = RECT::default();
-    // SAFETY: hwnd is the floating controller; rect is valid writable storage. SetWindowPos keeps
-    // the current right/top anchor while changing only the desired native popup bounds.
+pub fn configure_floating_list_window() -> Result<()> {
+    let hwnd = find_window_by_title(FLOATING_LIST_WINDOW_TITLE)?;
+    // SAFETY: hwnd is the independent GPUI MSTSC-list popup. Its current bounds are preserved while
+    // it is promoted into the topmost Z band without activation.
     unsafe {
-        GetWindowRect(hwnd, &mut rect).context("GetWindowRect failed")?;
-        let x = rect.right.saturating_sub(width);
         SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
-            x,
-            rect.top,
-            width,
-            height,
-            SWP_NOACTIVATE,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
-        .context("SetWindowPos resize failed")?;
+        .context("SetWindowPos floating list topmost failed")?;
     }
     Ok(())
 }
 
-pub fn cursor_in_floating_window() -> Result<bool> {
-    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
-    let mut rect = RECT::default();
+fn point_in_rect(point: POINT, rect: RECT) -> bool {
+    point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
+}
+
+pub fn cursor_in_floating_controls() -> Result<bool> {
+    let ball = find_window_by_title(FLOATING_BALL_WINDOW_TITLE)?;
     let mut cursor = POINT::default();
-    // SAFETY: hwnd is the floating controller. Both output structures are valid writable storage.
+    let mut ball_rect = RECT::default();
+    // SAFETY: cursor and rect are valid writable structures; ball is the application's live popup.
     unsafe {
-        GetWindowRect(hwnd, &mut rect).context("GetWindowRect failed")?;
         GetCursorPos(&mut cursor).context("GetCursorPos failed")?;
+        GetWindowRect(ball, &mut ball_rect).context("GetWindowRect floating ball failed")?;
     }
-    Ok(cursor.x >= rect.left
-        && cursor.x < rect.right
-        && cursor.y >= rect.top
-        && cursor.y < rect.bottom)
+    if point_in_rect(cursor, ball_rect) {
+        return Ok(true);
+    }
+
+    let Ok(list) = find_window_by_title(FLOATING_LIST_WINDOW_TITLE) else {
+        return Ok(false);
+    };
+    // SAFETY: list is a window owned by this application. Hidden list bounds are intentionally not
+    // considered part of the hover region.
+    if unsafe { !IsWindowVisible(list).as_bool() } {
+        return Ok(false);
+    }
+    let mut list_rect = RECT::default();
+    // SAFETY: list_rect is valid writable storage for the live list HWND.
+    unsafe {
+        GetWindowRect(list, &mut list_rect).context("GetWindowRect floating list failed")?;
+    }
+    Ok(point_in_rect(cursor, list_rect))
+}
+
+fn position_floating_list() -> Result<()> {
+    let ball = find_window_by_title(FLOATING_BALL_WINDOW_TITLE)?;
+    let list = find_window_by_title(FLOATING_LIST_WINDOW_TITLE)?;
+    let mut ball_rect = RECT::default();
+    let mut list_rect = RECT::default();
+    // SAFETY: both HWNDs belong to this process and both RECT values are valid writable storage.
+    unsafe {
+        GetWindowRect(ball, &mut ball_rect).context("GetWindowRect floating ball failed")?;
+        GetWindowRect(list, &mut list_rect).context("GetWindowRect floating list failed")?;
+    }
+
+    let list_width = (list_rect.right - list_rect.left).max(1);
+    let list_height = (list_rect.bottom - list_rect.top).max(1);
+    // SAFETY: GetSystemMetrics reads process-independent desktop metrics and has no pointer inputs.
+    let (virtual_left, virtual_top, virtual_width, virtual_height) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    let virtual_right = virtual_left.saturating_add(virtual_width);
+    let virtual_bottom = virtual_top.saturating_add(virtual_height);
+
+    let right_x = ball_rect.right.saturating_add(FLOATING_LIST_GAP);
+    let left_x = ball_rect
+        .left
+        .saturating_sub(FLOATING_LIST_GAP)
+        .saturating_sub(list_width);
+    let x = if right_x.saturating_add(list_width) <= virtual_right {
+        right_x
+    } else {
+        left_x.max(virtual_left)
+    };
+    let max_y = virtual_bottom.saturating_sub(list_height).max(virtual_top);
+    let y = ball_rect.top.clamp(virtual_top, max_y);
+
+    // SAFETY: list is the independent list popup. Only its position/Z-order are changed; its fixed
+    // GPUI layout size remains untouched, so moving the ball can never resize or shift the ball.
+    unsafe {
+        SetWindowPos(
+            list,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos floating list position failed")?;
+    }
+    Ok(())
+}
+
+pub fn set_floating_list_visible(visible: bool) -> Result<()> {
+    let list = find_window_by_title(FLOATING_LIST_WINDOW_TITLE)?;
+    if visible {
+        position_floating_list()?;
+        // SAFETY: list is the application's own popup. SW_SHOWNOACTIVATE preserves current focus,
+        // and SetWindowPos keeps it in the topmost band without changing its size or position.
+        unsafe {
+            let _ = ShowWindow(list, SW_SHOWNOACTIVATE);
+            SetWindowPos(
+                list,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+            .context("SetWindowPos shown floating list failed")?;
+        }
+    } else {
+        // SAFETY: list is the application's own popup and is simply hidden without destruction.
+        unsafe {
+            let _ = ShowWindow(list, SW_HIDE);
+        }
+    }
+    tracing::info!(visible, "floating MSTSC list visibility changed");
+    Ok(())
 }
 
 pub fn begin_floating_drag() -> Result<()> {
-    let hwnd = find_window_by_title(FLOATING_WINDOW_TITLE)?;
-    // SAFETY: hwnd is the floating controller. Releasing capture and sending a non-client caption
-    // press delegates the drag loop to Windows, which GPUI 0.2.x does not implement on Windows.
+    let ball = find_window_by_title(FLOATING_BALL_WINDOW_TITLE)?;
+    let mut start_rect = RECT::default();
+    let mut start_cursor = POINT::default();
+    // SAFETY: ball is the application's own popup and both output structures are valid writable
+    // storage. These values seed the manual drag loop below.
     unsafe {
-        let _ = ReleaseCapture();
-        let _ = SendMessageW(
-            hwnd,
-            WM_NCLBUTTONDOWN,
-            Some(WPARAM(HTCAPTION as usize)),
-            Some(LPARAM(0)),
-        );
+        GetWindowRect(ball, &mut start_rect)
+            .context("GetWindowRect before floating drag failed")?;
+        GetCursorPos(&mut start_cursor).context("GetCursorPos before floating drag failed")?;
     }
+    if FLOATING_DRAG_ACTIVE.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    let ball_raw = ball.0 as isize;
+    thread::spawn(move || {
+        let ball = HWND(ball_raw as *mut core::ffi::c_void);
+        let width = (start_rect.right - start_rect.left).max(1);
+        let height = (start_rect.bottom - start_rect.top).max(1);
+        tracing::info!("floating ball drag started");
+        loop {
+            // SAFETY: GetAsyncKeyState reads the global left-button state and requires no borrowed
+            // pointers. The high bit is set while the button is physically held.
+            let pressed = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
+            if !pressed {
+                break;
+            }
+
+            let mut cursor = POINT::default();
+            // SAFETY: cursor is valid writable storage for the current pointer position.
+            if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+                break;
+            }
+
+            // SAFETY: GetSystemMetrics only reads virtual-desktop dimensions.
+            let (virtual_left, virtual_top, virtual_width, virtual_height) = unsafe {
+                (
+                    GetSystemMetrics(SM_XVIRTUALSCREEN),
+                    GetSystemMetrics(SM_YVIRTUALSCREEN),
+                    GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                    GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                )
+            };
+            let max_x = virtual_left
+                .saturating_add(virtual_width)
+                .saturating_sub(width)
+                .max(virtual_left);
+            let max_y = virtual_top
+                .saturating_add(virtual_height)
+                .saturating_sub(height)
+                .max(virtual_top);
+            let x = start_rect
+                .left
+                .saturating_add(cursor.x.saturating_sub(start_cursor.x))
+                .clamp(virtual_left, max_x);
+            let y = start_rect
+                .top
+                .saturating_add(cursor.y.saturating_sub(start_cursor.y))
+                .clamp(virtual_top, max_y);
+
+            // SAFETY: ball remains owned by this process for the application lifetime. The manual
+            // drag changes only position and preserves the native circular region and topmost state.
+            unsafe {
+                let _ = SetWindowPos(
+                    ball,
+                    Some(HWND_TOPMOST),
+                    x,
+                    y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+            let _ = position_floating_list();
+            thread::sleep(DRAG_POLL_INTERVAL);
+        }
+        FLOATING_DRAG_ACTIVE.store(false, Ordering::SeqCst);
+        tracing::info!("floating ball drag finished");
+    });
     Ok(())
 }
 
@@ -409,6 +595,7 @@ fn tray_message_loop() -> Result<()> {
             let _ = DestroyWindow(hwnd);
             bail!("Shell_NotifyIconW(NIM_ADD) failed");
         }
+        tracing::info!("system tray icon created");
 
         let mut message = MSG::default();
         loop {
@@ -493,6 +680,7 @@ unsafe extern "system" fn tray_window_proc(
                 return LRESULT(0);
             }
             TRAY_MENU_EXIT => {
+                tracing::info!("exit requested from tray menu");
                 let _ = request_force_exit();
                 return LRESULT(0);
             }
@@ -505,11 +693,19 @@ unsafe extern "system" fn tray_window_proc(
 
 pub fn start_window_watcher(snapshot: WindowSnapshot) {
     thread::spawn(move || {
+        let mut last_count = usize::MAX;
         loop {
-            if let Ok(current) = enumerate_mstsc_windows()
-                && let Ok(mut guard) = snapshot.write()
-            {
-                *guard = current;
+            if let Ok(current) = enumerate_mstsc_windows() {
+                if current.len() != last_count {
+                    last_count = current.len();
+                    tracing::info!(
+                        count = last_count,
+                        "system-wide MSTSC window snapshot changed"
+                    );
+                }
+                if let Ok(mut guard) = snapshot.write() {
+                    *guard = current;
+                }
             }
             thread::sleep(Duration::from_millis(700));
         }
@@ -530,6 +726,7 @@ pub fn start_keepalive_worker(snapshot: WindowSnapshot, settings: RuntimeSetting
                     for item in windows.iter() {
                         post_keepalive(item.hwnd, current.keepalive_input);
                     }
+                    tracing::info!(count = windows.len(), "keepalive messages sent");
                 }
                 last_sent = Instant::now();
             }
@@ -558,6 +755,7 @@ fn post_keepalive(hwnd: isize, input: KeepAliveInput) {
 pub fn start_hotkey_worker(snapshot: WindowSnapshot, settings: RuntimeSettings) {
     thread::spawn(move || {
         let registrations = register_hotkeys();
+        tracing::info!(count = registrations.len(), "global hotkeys registered");
         let mut message = MSG::default();
         loop {
             // SAFETY: message points to initialized writable storage. This thread owns the message

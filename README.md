@@ -10,12 +10,13 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
 - Settings dialog for floating controller, persistent tabs, global hotkeys and keepalive behavior.
 - Encrypted vault import/export. **v0.1 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
-- Topmost transparent floating RDP controller. Hover expands the current MSTSC processes/windows; always-visible mode keeps translucent vertical tabs below it.
+- Topmost transparent floating RDP controller. Hover expands the current system-wide MSTSC processes/windows; always-visible mode keeps translucent vertical tabs below it.
+- MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Click a floating tab to restore/activate its MSTSC window.
-- Global switching:
+- Global switching operates on that complete system-wide set of visible MSTSC windows:
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
   - `Ctrl+Alt+Shift+Left/Right`: cycle through current MSTSC windows with wrap-around.
-- Optional keepalive with a targeted `WM_MOUSEMOVE` or Shift key message sent only to enumerated MSTSC HWNDs. It does not move the physical mouse or steal foreground focus.
+- Optional keepalive with a targeted `WM_MOUSEMOVE` or Shift key message sent only to enumerated MSTSC HWNDs. Because discovery is system-wide, keepalive currently also applies to externally launched MSTSC sessions. It does not move the physical mouse or steal foreground focus.
 - GitHub Actions CI on Windows and tagged release packaging.
 
 ## Security model
@@ -42,9 +43,16 @@ cargo build --release
 
 ## Release
 
-Push a SemVer tag matching `Cargo.toml`, for example `v0.1.2`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+Push a SemVer tag matching `Cargo.toml`, for example `v0.1.3`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 ## Development Log
+
+### version 0.1.3 2026-08-22 17:21:04
+
+- Verified that MSTSC discovery is already system-wide: `EnumWindows` scans the desktop, each owning PID is resolved to its process image, and any visible top-level window owned by `mstsc.exe` is included regardless of who launched it.
+- Confirmed that global numeric/cycle hotkeys consume this same system-wide snapshot, so manually launched, `.rdp`-launched, and third-party-launched MSTSC sessions participate in switching.
+- Added an explicit architecture constraint forbidding future implementations from filtering the global snapshot by saved connections or mstsc-mgr-owned PIDs.
+- Documented that keepalive currently consumes the same global MSTSC snapshot and therefore also applies to externally launched sessions when enabled.
 
 ### version 0.1.2 2026-08-22 17:01:15
 

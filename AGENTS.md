@@ -33,17 +33,19 @@ Keep platform handles out of persisted models. Raw HWND values may exist in runt
 ## Windows integration constraints
 
 - Identify MSTSC windows by resolving their owning process image and confirming `mstsc.exe`; never rely on title text alone.
+- MSTSC discovery is **system-wide**, not launch-owned: enumerate the current visible top-level Windows desktop windows and include every window whose owning process is `mstsc.exe`, including sessions launched manually, from `.rdp` files, or by other applications.
+- Never restrict the global MSTSC snapshot by `SavedConnection`, a PID list created by mstsc-mgr, child-process ownership, or any other "started by this app" bookkeeping.
 - Window activation must restore a minimized window before bringing it to the foreground.
-- Global shortcuts must use `RegisterHotKey`/`UnregisterHotKey`.
+- Global shortcuts must use `RegisterHotKey`/`UnregisterHotKey` and must operate on the system-wide MSTSC snapshot described above.
 - Numeric shortcuts map `Alt+Shift+1..9` to the current visible MSTSC window order.
 - Cycling shortcuts are `Ctrl+Alt+Shift+Left/Right` and wrap around.
-- Keepalive events must target only enumerated MSTSC HWNDs and must not move the user's physical pointer or steal focus.
+- Keepalive events currently use the same system-wide MSTSC snapshot, so when enabled they also target externally launched MSTSC sessions; they must not move the user's physical pointer or steal focus.
 - Floating controller is a top-level GPUI popup with transparent background and no .NET/WinUI dependency.
 
 ## UI/product constraints
 
 - Main window must provide account creation/edit/delete/connect, settings, encrypted import, and encrypted export.
-- Floating controller must be available after startup. Hovering expands the current MSTSC window list; selecting an item activates it.
+- Floating controller must be available after startup. Hovering expands the current system-wide MSTSC window list; selecting an item activates it.
 - `always_show_tabs=true` keeps the vertical translucent list visible under the ball.
 - Settings must expose floating controller, always-visible tabs, global hotkeys, keepalive enable, keepalive interval, and keepalive input type.
 - User-visible errors should be surfaced as status/notifications; do not silently discard persistence/platform errors.

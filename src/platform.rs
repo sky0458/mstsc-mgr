@@ -64,11 +64,13 @@ const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
 const TRAY_MENU_OPEN: u16 = 1001;
 const TRAY_MENU_EXIT: u16 = 1002;
-const FLOATING_LIST_GAP: i32 = 10;
+const FLOATING_LIST_GAP: i32 = 8;
+const FLOATING_DRAG_CLICK_THRESHOLD: i32 = 4;
 const DRAG_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 static FORCE_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static FLOATING_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+static FLOATING_DRAG_MOVED: AtomicBool = AtomicBool::new(false);
 
 pub type WindowSnapshot = Arc<RwLock<Vec<MstscWindow>>>;
 pub type RuntimeSettings = Arc<RwLock<AppSettings>>;
@@ -271,6 +273,15 @@ pub fn show_main_window() -> Result<()> {
     activate_hwnd(hwnd)
 }
 
+pub fn handle_floating_ball_click() -> Result<()> {
+    if FLOATING_DRAG_MOVED.swap(false, Ordering::SeqCst) {
+        tracing::debug!("floating ball click suppressed after drag");
+        return Ok(());
+    }
+    tracing::info!("floating ball clicked; showing main window");
+    show_main_window()
+}
+
 pub fn take_force_exit_requested() -> bool {
     FORCE_EXIT_REQUESTED.swap(false, Ordering::SeqCst)
 }
@@ -395,21 +406,23 @@ fn position_floating_list() -> Result<()> {
     let virtual_right = virtual_left.saturating_add(virtual_width);
     let virtual_bottom = virtual_top.saturating_add(virtual_height);
 
-    let right_x = ball_rect.right.saturating_add(FLOATING_LIST_GAP);
-    let left_x = ball_rect
-        .left
-        .saturating_sub(FLOATING_LIST_GAP)
-        .saturating_sub(list_width);
-    let x = if right_x.saturating_add(list_width) <= virtual_right {
-        right_x
-    } else {
-        left_x.max(virtual_left)
-    };
+    let max_x = virtual_right.saturating_sub(list_width).max(virtual_left);
+    let preferred_x = ball_rect.right.saturating_sub(list_width);
+    let x = preferred_x.clamp(virtual_left, max_x);
+    let below_y = ball_rect.bottom.saturating_add(FLOATING_LIST_GAP);
     let max_y = virtual_bottom.saturating_sub(list_height).max(virtual_top);
-    let y = ball_rect.top.clamp(virtual_top, max_y);
+    let y = if below_y.saturating_add(list_height) <= virtual_bottom {
+        below_y
+    } else {
+        ball_rect
+            .top
+            .saturating_sub(FLOATING_LIST_GAP)
+            .saturating_sub(list_height)
+            .clamp(virtual_top, max_y)
+    };
 
-    // SAFETY: list is the independent list popup. Only its position/Z-order are changed; its fixed
-    // GPUI layout size remains untouched, so moving the ball can never resize or shift the ball.
+    // SAFETY: list is the independent list popup. Only its position/Z-order are changed. The
+    // preferred placement is directly below the ball and falls back above only at the screen edge.
     unsafe {
         SetWindowPos(
             list,
@@ -468,6 +481,7 @@ pub fn begin_floating_drag() -> Result<()> {
     if FLOATING_DRAG_ACTIVE.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    FLOATING_DRAG_MOVED.store(false, Ordering::SeqCst);
 
     let ball_raw = ball.0 as isize;
     thread::spawn(move || {
@@ -489,6 +503,14 @@ pub fn begin_floating_drag() -> Result<()> {
                 break;
             }
 
+            let delta_x = cursor.x.saturating_sub(start_cursor.x);
+            let delta_y = cursor.y.saturating_sub(start_cursor.y);
+            if delta_x.abs() >= FLOATING_DRAG_CLICK_THRESHOLD
+                || delta_y.abs() >= FLOATING_DRAG_CLICK_THRESHOLD
+            {
+                FLOATING_DRAG_MOVED.store(true, Ordering::SeqCst);
+            }
+
             // SAFETY: GetSystemMetrics only reads virtual-desktop dimensions.
             let (virtual_left, virtual_top, virtual_width, virtual_height) = unsafe {
                 (
@@ -508,11 +530,11 @@ pub fn begin_floating_drag() -> Result<()> {
                 .max(virtual_top);
             let x = start_rect
                 .left
-                .saturating_add(cursor.x.saturating_sub(start_cursor.x))
+                .saturating_add(delta_x)
                 .clamp(virtual_left, max_x);
             let y = start_rect
                 .top
-                .saturating_add(cursor.y.saturating_sub(start_cursor.y))
+                .saturating_add(delta_y)
                 .clamp(virtual_top, max_y);
 
             // SAFETY: ball remains owned by this process for the application lifetime. The manual

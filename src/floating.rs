@@ -48,8 +48,7 @@ const FLOATING_MENU_EXIT: u16 = 2003;
 
 static FLOATING_CONTROLLER_VISIBLE: AtomicBool = AtomicBool::new(false);
 static FLOATING_FORCE_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-static FLOATING_BALL_NATIVE_SIZE: AtomicI32 =
-    AtomicI32::new(DEFAULT_FLOATING_BALL_NATIVE_SIZE);
+static FLOATING_BALL_NATIVE_SIZE: AtomicI32 = AtomicI32::new(DEFAULT_FLOATING_BALL_NATIVE_SIZE);
 
 fn floating_list_height(window_count: usize) -> f32 {
     let visible_rows = window_count.clamp(1, FLOATING_MAX_TABS) as f32;
@@ -300,7 +299,9 @@ impl Render for FloatingBall {
         window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
         window.resize(size(px(FLOATING_BALL_SIZE), px(FLOATING_BALL_SIZE)));
 
-        let native_size = (FLOATING_BALL_SIZE * window.scale_factor()).round().max(1.0) as i32;
+        let native_size = (FLOATING_BALL_SIZE * window.scale_factor())
+            .round()
+            .max(1.0) as i32;
         FLOATING_BALL_NATIVE_SIZE.store(native_size, Ordering::SeqCst);
         if self.configured_native_size != native_size
             && configure_floating_ball_native(native_size).is_ok()

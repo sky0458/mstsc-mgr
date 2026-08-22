@@ -85,10 +85,11 @@ fn main() -> anyhow::Result<()> {
         platform::start_tray_worker();
 
         if floating_enabled
-            && let Err(error) = cx.open_window(floating::floating_window_options(cx), |window, cx| {
-                window.set_window_title(platform::FLOATING_WINDOW_TITLE);
-                cx.new(|cx| FloatingController::new(floating_state, cx))
-            })
+            && let Err(error) =
+                cx.open_window(floating::floating_window_options(cx), |window, cx| {
+                    window.set_window_title(platform::FLOATING_WINDOW_TITLE);
+                    cx.new(|cx| FloatingController::new(floating_state, cx))
+                })
         {
             tracing::error!(%error, "failed to open floating controller");
         }

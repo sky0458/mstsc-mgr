@@ -5,7 +5,7 @@ use crate::{
 };
 use gpui::{
     App, AppContext, Context, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
-    Styled, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    Styled, Window, WindowBounds, WindowOptions, div, px, rgb, size,
 };
 use gpui_component::{
     Root, WindowExt,

@@ -1,7 +1,6 @@
 use crate::{
     config::{self, AppPaths},
     domain::{AppSettings, KeepAliveInput, SavedConnection, VaultPayload},
-    floating,
     platform::{self, RuntimeSettings, WindowSnapshot},
 };
 use gpui::{
@@ -394,8 +393,6 @@ impl ManagerView {
                         .start()
                         .round()
                         .clamp(10.0, 100.0) as u8;
-                    let floating_enabled = next.floating_controller;
-                    let always_show_tabs = next.always_show_tabs;
                     let result = state_for_ok
                         .write()
                         .map_err(|_| anyhow::anyhow!("state lock poisoned"))
@@ -408,14 +405,6 @@ impl ManagerView {
                         });
                     match result {
                         Ok(()) => {
-                            if let Err(error) = floating::set_controller_visible(floating_enabled) {
-                                tracing::error!(%error, "failed to apply floating controller setting");
-                            }
-                            if let Err(error) = platform::set_floating_list_visible(
-                                floating_enabled && always_show_tabs,
-                            ) {
-                                tracing::error!(%error, "failed to apply floating list setting");
-                            }
                             manager_for_ok.update(app, |view, cx| {
                                 view.set_status(
                                     "Settings saved; runtime switches apply immediately",

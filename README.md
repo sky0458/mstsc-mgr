@@ -14,8 +14,6 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - The floating controller is two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate compact MSTSC-session popup. Showing the list never resizes or moves the ball.
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
 - Floating-controller opacity is configurable from 10% to 100% with a Settings slider and defaults to 50%; the same value is applied to both the RDP ball and its hover session popup.
-- The floating controller is enabled by default and can be shown/hidden at runtime from Settings without restarting the application.
-- Right-clicking the floating ball opens a native menu with `Show main window`, `Close floating controller`, and `Exit` actions. Closing the controller hides the floating UI for the current run; it can be shown again from Settings.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
 - The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window.
@@ -61,12 +59,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.6`.
+- Push a matching SemVer tag such as `v0.2.7`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.7 2026-08-23 00:48:00
+
+- Reset the implementation tree to the exact `v0.2.3` baseline before applying this version, intentionally removing the later v0.2.4-v0.2.6 floating-controller implementation changes while retaining their historical log entries below.
+- Added only one floating-controller UI enhancement on top of v0.2.3: a persisted 10-100% opacity slider in Settings, defaulting to 50%, applied consistently to the RDP ball and the hover MSTSC-session popup.
+- Stabilized the shared system-wide MSTSC snapshot by sorting sessions by PID and HWND before publishing it. The hover-list numbers and `Alt+Shift+1..9` now consume the same deterministic order, so focus/Z-order changes no longer reshuffle the numeric mapping.
 
 ### version 0.2.6 2026-08-23 00:16:00
 

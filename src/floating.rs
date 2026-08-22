@@ -20,8 +20,8 @@ use windows::{
         UI::WindowsAndMessaging::{
             AppendMenuW, CreatePopupMenu, DestroyMenu, FindWindowW, GetCursorPos, HWND_TOPMOST,
             MF_SEPARATOR, MF_STRING, PostMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-            SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TPM_LEFTALIGN,
-            TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_CLOSE,
+            SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_NONOTIFY,
+            TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_CLOSE,
         },
     },
     core::HSTRING,

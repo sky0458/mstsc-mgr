@@ -4,19 +4,20 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 
 ## Features
 
-- Native Rust/GPUI desktop app; no .NET/WPF/WinUI, Electron, Java, Python or Node runtime.
+- Native Rust/GPUI desktop app; no .NET/WPF/WinUI, Electron, Java, Python or Node runtime. Windows release builds use the GUI subsystem, so launching `mstsc-mgr.exe` does not open a console/terminal window.
 - Save multiple RDP connections with host, port, username, password and optional MSTSC arguments.
 - Passwords and the local vault are encrypted with Windows DPAPI; plaintext secrets are not written to disk.
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
-- Settings dialog for floating controller, persistent tabs, global hotkeys and keepalive behavior.
-- Encrypted vault import/export. **v0.1 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
-- Topmost transparent floating RDP controller. Hover expands the current system-wide MSTSC processes/windows; always-visible mode keeps translucent vertical tabs below it.
+- Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray and keepalive behavior.
+- Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
+- Compact topmost transparent floating RDP controller. The collapsed native window is only the size of the 48px ball plus padding; hovering expands the current system-wide MSTSC list, and the ball can be dragged anywhere on the desktop.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
-- Click a floating tab to restore/activate its MSTSC window.
+- Click a floating tab to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
 - Global switching operates on that complete system-wide set of visible MSTSC windows:
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
   - `Ctrl+Alt+Shift+Left/Right`: cycle through current MSTSC windows with wrap-around.
 - Optional keepalive with a targeted `WM_MOUSEMOVE` or Shift key message sent only to enumerated MSTSC HWNDs. Because discovery is system-wide, keepalive currently also applies to externally launched MSTSC sessions. It does not move the physical mouse or steal foreground focus.
+- The main window uses the native Windows title bar and is movable/resizable. Closing it defaults to hiding it in the system tray; this behavior can be disabled in Settings, and clicking the tray icon restores the main window.
 - GitHub Actions CI on Windows and tagged release packaging.
 
 ## Security model
@@ -47,12 +48,22 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.1.5`.
+- Push a matching SemVer tag such as `v0.2.0`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.0 2026-08-22 18:48:00
+
+- Reworked the floating controller into a compact native popup: collapsed bounds now match the ball instead of reserving a 360×560 invisible/white rectangle, and the GPUI `Root` wrapper is no longer used for the transparent popup.
+- Added Win32 caption-drag behavior to the floating ball so it can be moved freely on Windows, and promoted/resized it with `HWND_TOPMOST` so it stays above normal application windows.
+- Hardened MSTSC activation for both floating tabs and global hotkeys by temporarily attaching the app thread input queue to the current foreground/target threads before restoring and foregrounding the selected RDP window.
+- Switched Windows builds to the GUI subsystem so launching the release executable no longer creates an accompanying cmd/terminal console window.
+- Restored normal main-window movement/resizing by using the native Windows title bar instead of the undraggable transparent component title bar configuration.
+- Added a native system-tray icon and a `Close main window to system tray` setting. The setting defaults to enabled; clicking X hides the main window, clicking the tray icon restores it, and disabling the setting makes X exit the app.
+- Added the Win32 Shell and LibraryLoader bindings required for tray integration while keeping the project dependency/runtime boundary unchanged.
 
 ### version 0.1.5 2026-08-22 17:31:11
 

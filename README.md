@@ -42,9 +42,14 @@ cargo build --release
 
 ## Release
 
-Push a SemVer tag matching `Cargo.toml`, for example `v0.1.0`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+Push a SemVer tag matching `Cargo.toml`, for example `v0.1.1`. `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 ## Development Log
+
+### version 0.1.1 2026-08-22 16:51:55
+
+- Applied the first `rustfmt` normalization reported by Windows CI.
+- Temporarily made the format step non-blocking on the feature branch so Clippy/test/release-build can expose the actual GPUI/Win32 API compatibility errors in the same CI pass; strict formatting is restored before the PR is marked ready.
 
 ### version 0.1.0 2026-08-22 16:38:00
 

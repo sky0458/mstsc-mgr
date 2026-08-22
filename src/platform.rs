@@ -23,10 +23,10 @@ use windows::{
                 MOD_ALT, MOD_CONTROL, MOD_SHIFT, VIRTUAL_KEY, VK_LEFT, VK_RIGHT,
             },
             WindowsAndMessaging::{
-                EnumWindows, GetForegroundWindow, GetMessageW, GetWindowTextLengthW, GetWindowTextW,
-                GetWindowThreadProcessId, IsWindowVisible, MSG, PostMessageW, RegisterHotKey,
-                SW_RESTORE, SetForegroundWindow, ShowWindow, UnregisterHotKey, WM_HOTKEY, WM_KEYDOWN,
-                WM_KEYUP, WM_MOUSEMOVE,
+                EnumWindows, GetForegroundWindow, GetMessageW, GetWindowTextLengthW,
+                GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, MSG, PostMessageW,
+                RegisterHotKey, SW_RESTORE, SetForegroundWindow, ShowWindow, UnregisterHotKey,
+                WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_MOUSEMOVE,
             },
         },
     },
@@ -184,13 +184,15 @@ pub fn activate_window(hwnd: isize) -> Result<()> {
 }
 
 pub fn start_window_watcher(snapshot: WindowSnapshot) {
-    thread::spawn(move || loop {
-        if let Ok(current) = enumerate_mstsc_windows()
-            && let Ok(mut guard) = snapshot.write()
-        {
-            *guard = current;
+    thread::spawn(move || {
+        loop {
+            if let Ok(current) = enumerate_mstsc_windows()
+                && let Ok(mut guard) = snapshot.write()
+            {
+                *guard = current;
+            }
+            thread::sleep(Duration::from_millis(700));
         }
-        thread::sleep(Duration::from_millis(700));
     });
 }
 

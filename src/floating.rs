@@ -187,26 +187,23 @@ impl Render for FloatingList {
             }
         }
 
-        div()
-            .size_full()
-            .p_2()
-            .child(
-                v_flex()
-                    .size_full()
-                    .p_3()
-                    .gap_2()
-                    .rounded_lg()
-                    .bg(rgb(PANEL))
-                    .opacity(0.97)
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT))
-                            .child("MSTSC sessions"),
-                    )
-                    .child(rows),
-            )
+        div().size_full().p_2().child(
+            v_flex()
+                .size_full()
+                .p_3()
+                .gap_2()
+                .rounded_lg()
+                .bg(rgb(PANEL))
+                .opacity(0.97)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(TEXT))
+                        .child("MSTSC sessions"),
+                )
+                .child(rows),
+        )
     }
 }
 
@@ -272,9 +269,11 @@ pub fn initial_list_visibility(state: &Arc<RwLock<AppState>>) -> bool {
         .read()
         .ok()
         .and_then(|state| {
-            state.runtime_settings.read().ok().map(|settings| {
-                settings.floating_controller && settings.always_show_tabs
-            })
+            state
+                .runtime_settings
+                .read()
+                .ok()
+                .map(|settings| settings.floating_controller && settings.always_show_tabs)
         })
         .unwrap_or(false)
 }

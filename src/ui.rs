@@ -295,10 +295,9 @@ impl ManagerView {
                             v_flex()
                                 .gap_1()
                                 .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(rgb(MUTED))
-                                        .child("Floating controller opacity (10-100%, default 50%)"),
+                                    div().text_sm().text_color(rgb(MUTED)).child(
+                                        "Floating controller opacity (10-100%, default 50%)",
+                                    ),
                                 )
                                 .child(Slider::new(&opacity_for_view)),
                         )
@@ -392,7 +391,8 @@ impl ManagerView {
                         .value()
                         .start()
                         .round()
-                        .clamp(10.0, 100.0) as u8;
+                        .clamp(10.0, 100.0)
+                        as u8;
                     let result = state_for_ok
                         .write()
                         .map_err(|_| anyhow::anyhow!("state lock poisoned"))

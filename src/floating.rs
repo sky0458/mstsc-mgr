@@ -16,12 +16,18 @@ const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
 
 const FLOATING_BALL_SIZE: f32 = 64.0;
-const FLOATING_LIST_WIDTH: f32 = 360.0;
-const FLOATING_LIST_HEIGHT: f32 = 420.0;
+const FLOATING_LIST_WIDTH: f32 = 240.0;
+const FLOATING_LIST_BASE_HEIGHT: f32 = 48.0;
+const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
 const FLOATING_MAX_TABS: usize = 9;
 const POINTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const POINTER_LEAVE_GRACE: Duration = Duration::from_millis(500);
 const LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(350);
+
+fn floating_list_height(window_count: usize) -> f32 {
+    let visible_rows = window_count.clamp(1, FLOATING_MAX_TABS) as f32;
+    FLOATING_LIST_BASE_HEIGHT + visible_rows * FLOATING_LIST_ROW_HEIGHT
+}
 
 pub struct FloatingBall {
     list_visible: bool,
@@ -87,7 +93,7 @@ impl Render for FloatingBall {
         }
 
         div()
-            .id("floating-ball-v3")
+            .id("floating-ball-v4")
             .size_full()
             .rounded_full()
             .bg(rgb(ACCENT))
@@ -102,6 +108,11 @@ impl Render for FloatingBall {
                     tracing::error!(%error, "failed to begin floating-ball drag");
                 }
             })
+            .on_click(|_, _, _| {
+                if let Err(error) = platform::handle_floating_ball_click() {
+                    tracing::error!(%error, "failed to open main window from floating ball");
+                }
+            })
             .child("RDP")
     }
 }
@@ -109,6 +120,7 @@ impl Render for FloatingBall {
 pub struct FloatingList {
     state: Arc<RwLock<AppState>>,
     native_ready: bool,
+    last_height: Option<f32>,
 }
 
 impl FloatingList {
@@ -128,6 +140,7 @@ impl FloatingList {
         Self {
             state,
             native_ready: false,
+            last_height: None,
         }
     }
 }
@@ -135,9 +148,6 @@ impl FloatingList {
 impl Render for FloatingList {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
-        if !self.native_ready && platform::configure_floating_list_window().is_ok() {
-            self.native_ready = true;
-        }
 
         let windows = self
             .state
@@ -145,19 +155,28 @@ impl Render for FloatingList {
             .ok()
             .and_then(|state| state.windows.read().ok().map(|windows| windows.clone()))
             .unwrap_or_default();
+        let desired_height = floating_list_height(windows.len());
+        if self.last_height != Some(desired_height) {
+            window.resize(size(px(FLOATING_LIST_WIDTH), px(desired_height)));
+            self.last_height = Some(desired_height);
+            self.native_ready = false;
+        }
+        if !self.native_ready && platform::configure_floating_list_window().is_ok() {
+            self.native_ready = true;
+        }
 
         let mut rows = v_flex().gap_1().w_full();
         if windows.is_empty() {
             rows = rows.child(
                 div()
                     .w_full()
-                    .px_3()
-                    .py_3()
+                    .px_2()
+                    .py_2()
                     .rounded_md()
                     .bg(rgb(0x0f172a))
-                    .text_sm()
+                    .text_xs()
                     .text_color(rgb(MUTED))
-                    .child("No MSTSC windows detected"),
+                    .child("No MSTSC windows"),
             );
         } else {
             for (index, mstsc) in windows.iter().take(FLOATING_MAX_TABS).enumerate() {
@@ -165,14 +184,16 @@ impl Render for FloatingList {
                 let label = format!("{}  {}", index + 1, mstsc.title);
                 rows = rows.child(
                     div()
-                        .id(("mstsc-list-row", index))
+                        .id(("mstsc-list-row-v4", index))
                         .w_full()
-                        .px_3()
-                        .py_2()
+                        .h(px(32.0))
+                        .px_2()
                         .rounded_md()
                         .bg(rgb(0x0f172a))
-                        .text_sm()
+                        .text_xs()
                         .text_color(rgb(TEXT))
+                        .flex()
+                        .items_center()
                         .cursor_pointer()
                         .on_click(move |_, _, _| {
                             if let Err(error) = platform::activate_window(hwnd) {
@@ -184,17 +205,17 @@ impl Render for FloatingList {
             }
         }
 
-        div().size_full().p_2().child(
+        div().size_full().p_1().child(
             v_flex()
                 .size_full()
-                .p_3()
-                .gap_2()
+                .p_2()
+                .gap_1()
                 .rounded_lg()
                 .bg(rgb(PANEL))
                 .opacity(0.97)
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(TEXT))
                         .child("MSTSC sessions"),
@@ -238,10 +259,10 @@ pub fn floating_list_window_options(cx: &App) -> WindowOptions {
         .map(|display| display.bounds())
         .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), size(px(1920.), px(1080.))));
     let width = px(FLOATING_LIST_WIDTH);
-    let height = px(FLOATING_LIST_HEIGHT);
+    let height = px(floating_list_height(0));
     let origin = point(
-        display_bounds.origin.x + display_bounds.size.width - width - px(100.),
-        display_bounds.origin.y + px(100.),
+        display_bounds.origin.x + display_bounds.size.width - width - px(24.),
+        display_bounds.origin.y + px(100. + FLOATING_BALL_SIZE + 8.0),
     );
 
     WindowOptions {

@@ -60,6 +60,8 @@ pub enum KeepAliveInput {
 pub struct AppSettings {
     #[serde(default = "default_true")]
     pub floating_controller: bool,
+    #[serde(default = "default_floating_opacity_percent")]
+    pub floating_opacity_percent: u8,
     #[serde(default)]
     pub always_show_tabs: bool,
     #[serde(default = "default_true")]
@@ -76,10 +78,17 @@ pub struct AppSettings {
     pub keepalive_input: KeepAliveInput,
 }
 
+impl AppSettings {
+    pub fn floating_opacity(&self) -> f32 {
+        f32::from(self.floating_opacity_percent.clamp(10, 100)) / 100.0
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             floating_controller: true,
+            floating_opacity_percent: default_floating_opacity_percent(),
             always_show_tabs: false,
             global_hotkeys: true,
             close_to_tray: true,
@@ -93,6 +102,10 @@ impl Default for AppSettings {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_floating_opacity_percent() -> u8 {
+    50
 }
 
 const fn default_keepalive_seconds() -> u64 {
@@ -166,5 +179,12 @@ mod tests {
         let debug = format!("{:?}", connection());
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("secret"));
+    }
+
+    #[test]
+    fn floating_opacity_defaults_to_half() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.floating_opacity_percent, 50);
+        assert!((settings.floating_opacity() - 0.5).abs() < f32::EPSILON);
     }
 }

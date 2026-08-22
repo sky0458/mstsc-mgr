@@ -43,7 +43,7 @@ use windows::{
             },
         },
     },
-    core::{BOOL, HSTRING, PCWSTR, PWSTR},
+    core::{BOOL, HSTRING, PWSTR},
 };
 
 pub const MAIN_WINDOW_TITLE: &str = "mstsc-mgr";

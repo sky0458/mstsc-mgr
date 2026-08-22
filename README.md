@@ -11,10 +11,11 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Settings dialog for floating controller, persistent tabs, global hotkeys, close-to-tray, diagnostic logging and keepalive behavior.
 - Diagnostic logging defaults to enabled and writes `mstsc-mgr.log` next to `mstsc-mgr.exe` when that directory is writable. The Settings switch can stop subsequent log writes immediately; passwords, decrypted vault data and credential blobs are never logged.
 - Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
-- The floating controller is now two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate topmost MSTSC-session list popup. Showing the list never resizes or moves the ball.
+- The floating controller is two independent GPUI/Win32 top-level components: a fixed 64px native circular topmost RDP ball and a separate compact MSTSC-session popup. Showing the list never resizes or moves the ball.
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
-- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior.
+- The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
+- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
 - Global switching operates on that complete system-wide set of visible MSTSC windows:
@@ -56,12 +57,20 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.2`.
+- Push a matching SemVer tag such as `v0.2.3`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.3 2026-08-22 22:04:00
+
+- Forced the independent MSTSC popup to a compact 240px width and changed its height to follow the current visible session count instead of retaining a large fixed 360×420 surface. The hidden popup is resized through GPUI before it is shown, preventing the near-full-screen native popup seen on affected Windows environments.
+- Repositioned the popup directly below the floating RDP ball with right-edge alignment and virtual-desktop clamping; it only flips above the ball when there is not enough space below.
+- Added normal floating-ball click behavior to restore/activate the main mstsc-mgr window.
+- Added a drag-distance threshold so a real floating-ball drag suppresses the subsequent click action, while an ordinary click opens the main window.
+- Kept hover detection spanning both the ball and the independent compact list, preserving stable row selection while moving the pointer into the popup.
 
 ### version 0.2.2 2026-08-22 20:48:33
 

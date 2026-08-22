@@ -44,9 +44,9 @@ use windows::{
                 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
                 SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos,
                 ShowWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_HOTKEY,
-                WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NULL,
-                WM_RBUTTONUP, WNDCLASSW,
+                WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_HOTKEY, WM_KEYDOWN,
+                WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NULL, WM_RBUTTONUP,
+                WNDCLASSW,
             },
         },
     },
@@ -461,7 +461,8 @@ pub fn begin_floating_drag() -> Result<()> {
     // SAFETY: ball is the application's own popup and both output structures are valid writable
     // storage. These values seed the manual drag loop below.
     unsafe {
-        GetWindowRect(ball, &mut start_rect).context("GetWindowRect before floating drag failed")?;
+        GetWindowRect(ball, &mut start_rect)
+            .context("GetWindowRect before floating drag failed")?;
         GetCursorPos(&mut start_cursor).context("GetCursorPos before floating drag failed")?;
     }
     if FLOATING_DRAG_ACTIVE.swap(true, Ordering::SeqCst) {
@@ -697,7 +698,10 @@ pub fn start_window_watcher(snapshot: WindowSnapshot) {
             if let Ok(current) = enumerate_mstsc_windows() {
                 if current.len() != last_count {
                     last_count = current.len();
-                    tracing::info!(count = last_count, "system-wide MSTSC window snapshot changed");
+                    tracing::info!(
+                        count = last_count,
+                        "system-wide MSTSC window snapshot changed"
+                    );
                 }
                 if let Ok(mut guard) = snapshot.write() {
                     *guard = current;

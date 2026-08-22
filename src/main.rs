@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     if let Ok(guard) = state.read() {
-        platform::start_window_watcher(Arc::clone(&guard.windows));
+        floating::start_stable_window_watcher(Arc::clone(&guard.windows));
         platform::start_keepalive_worker(
             Arc::clone(&guard.windows),
             Arc::clone(&guard.runtime_settings),
@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
             window.set_window_title(platform::MAIN_WINDOW_TITLE);
             let close_state = Arc::clone(&manager_state);
             window.on_window_should_close(cx, move |_, app| {
-                if platform::take_force_exit_requested() {
+                if platform::take_force_exit_requested() || floating::take_force_exit_requested() {
                     app.quit();
                     return true;
                 }
@@ -89,37 +89,38 @@ fn main() -> anyhow::Result<()> {
 
         platform::start_tray_worker();
 
-        if floating_enabled {
-            if let Err(error) = cx.open_window(
-                floating::floating_ball_window_options(cx),
-                |window, cx| {
-                    window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
-                    cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
-                },
-            ) {
-                tracing::error!(%error, "failed to open floating ball");
-            }
+        if let Err(error) = cx.open_window(
+            floating::floating_ball_window_options(cx),
+            |window, cx| {
+                window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
+                cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
+            },
+        ) {
+            tracing::error!(%error, "failed to open floating ball");
+        }
 
-            if let Err(error) = cx.open_window(
-                floating::floating_list_window_options(cx),
-                |window, cx| {
-                    window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
-                    cx.new(|cx| FloatingList::new(floating_list_state, cx))
-                },
-            ) {
-                tracing::error!(%error, "failed to open floating MSTSC list");
-            }
+        if let Err(error) = cx.open_window(
+            floating::floating_list_window_options(cx),
+            |window, cx| {
+                window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
+                cx.new(|cx| FloatingList::new(floating_list_state, cx))
+            },
+        ) {
+            tracing::error!(%error, "failed to open floating MSTSC list");
+        }
 
-            if let Err(error) = platform::configure_floating_ball_window() {
-                tracing::warn!(%error, "floating ball native configuration will retry during render");
-            }
-            if let Err(error) = platform::configure_floating_list_window() {
-                tracing::warn!(%error, "floating list native configuration will retry during render");
-            }
-            let initial_visible = floating::initial_list_visibility(&state);
-            if let Err(error) = platform::set_floating_list_visible(initial_visible) {
-                tracing::warn!(%error, "failed to apply initial floating-list visibility");
-            }
+        if let Err(error) = platform::configure_floating_ball_window() {
+            tracing::warn!(%error, "floating ball native configuration will retry during render");
+        }
+        if let Err(error) = platform::configure_floating_list_window() {
+            tracing::warn!(%error, "floating list native configuration will retry during render");
+        }
+        if let Err(error) = floating::set_controller_visible(floating_enabled) {
+            tracing::warn!(%error, "failed to apply initial floating-controller visibility");
+        }
+        let initial_list_visible = floating_enabled && floating::initial_list_visibility(&state);
+        if let Err(error) = platform::set_floating_list_visible(initial_list_visible) {
+            tracing::warn!(%error, "failed to apply initial floating-list visibility");
         }
 
         cx.activate(true);

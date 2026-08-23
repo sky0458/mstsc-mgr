@@ -13,11 +13,15 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{HWND, RECT},
-        UI::WindowsAndMessaging::{
-            FindWindowW, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-            SWP_NOACTIVATE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+        Foundation::{HWND, POINT, RECT},
+        UI::{
+            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
+            WindowsAndMessaging::{
+                FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, HWND_TOPMOST,
+                IsWindowVisible, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+                SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+            },
         },
     },
     core::HSTRING,
@@ -34,18 +38,31 @@ const FLOATING_LIST_BASE_HEIGHT: f32 = 48.0;
 const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
 const FLOATING_MAX_TABS: usize = 9;
 const FLOATING_MENU_WIDTH: f32 = 180.0;
-const FLOATING_MENU_HEIGHT: f32 = 124.0;
-const FLOATING_MENU_GAP: i32 = 8;
+const FLOATING_MENU_ITEM_HEIGHT: f32 = 32.0;
+const FLOATING_MENU_ITEM_COUNT: usize = 3;
+const FLOATING_MENU_OUTER_PADDING: f32 = 8.0;
+const FLOATING_MENU_GAP_HEIGHT: f32 = 4.0;
+const FLOATING_MENU_GAP: i32 = 2;
+const FLOATING_DEFAULT_EDGE_GAP: i32 = 24;
 const POINTER_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const POINTER_LEAVE_GRACE: Duration = Duration::from_millis(500);
 const LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(350);
 const WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(700);
+const MENU_DISMISS_POLL_INTERVAL: Duration = Duration::from_millis(15);
+const POSITION_PERSIST_DELAY: Duration = Duration::from_millis(30);
 
 pub const FLOATING_MENU_WINDOW_TITLE: &str = "mstsc-mgr-floating-menu";
 
 fn floating_list_height(window_count: usize) -> f32 {
     let visible_rows = window_count.clamp(1, FLOATING_MAX_TABS) as f32;
     FLOATING_LIST_BASE_HEIGHT + visible_rows * FLOATING_LIST_ROW_HEIGHT
+}
+
+fn floating_menu_height() -> f32 {
+    let gaps = FLOATING_MENU_ITEM_COUNT.saturating_sub(1) as f32;
+    FLOATING_MENU_OUTER_PADDING
+        + FLOATING_MENU_ITEM_COUNT as f32 * FLOATING_MENU_ITEM_HEIGHT
+        + gaps * FLOATING_MENU_GAP_HEIGHT
 }
 
 fn opacity_from_state(state: &Arc<RwLock<AppState>>) -> f32 {
@@ -82,6 +99,10 @@ fn find_floating_window(title: &str) -> Result<HWND> {
     unsafe { FindWindowW(None, &title).context("FindWindowW failed") }
 }
 
+fn point_in_rect(point: POINT, rect: RECT) -> bool {
+    point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
+}
+
 pub fn set_controller_visible(visible: bool) -> Result<()> {
     let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
     // SAFETY: ball is the application's existing floating GPUI window. Only visibility and Z-order
@@ -108,6 +129,27 @@ pub fn set_controller_visible(visible: bool) -> Result<()> {
         let _ = set_context_menu_visible(false);
     }
     tracing::info!(visible, "floating controller visibility changed");
+    Ok(())
+}
+
+fn configure_context_menu_window() -> Result<()> {
+    let menu = find_floating_window(FLOATING_MENU_WINDOW_TITLE)?;
+    let width = FLOATING_MENU_WIDTH.round() as i32;
+    let height = floating_menu_height().round() as i32;
+    // SAFETY: menu is this process's hidden/visible popup. The operation only forces its compact
+    // native size and keeps its current position while avoiding activation.
+    unsafe {
+        SetWindowPos(
+            menu,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            width,
+            height,
+            SWP_NOMOVE | SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos floating menu size failed")?;
+    }
     Ok(())
 }
 
@@ -171,6 +213,7 @@ pub fn set_context_menu_visible(visible: bool) -> Result<()> {
     // SAFETY: menu is the application's independent GPUI popup and is only shown/hidden here.
     unsafe {
         if visible {
+            configure_context_menu_window()?;
             position_context_menu()?;
             let _ = ShowWindow(menu, SW_SHOWNOACTIVATE);
             SetWindowPos(
@@ -180,7 +223,7 @@ pub fn set_context_menu_visible(visible: bool) -> Result<()> {
                 0,
                 0,
                 0,
-                SWP_NOSIZE | SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
             .context("SetWindowPos shown floating menu failed")?;
         } else {
@@ -188,6 +231,54 @@ pub fn set_context_menu_visible(visible: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn start_context_menu_dismiss_watcher() {
+    thread::spawn(|| {
+        let mut left_was_down = false;
+        let mut right_was_down = false;
+        loop {
+            // SAFETY: GetAsyncKeyState only reads global mouse-button state.
+            let left_down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
+            // SAFETY: GetAsyncKeyState only reads global mouse-button state.
+            let right_down = unsafe { GetAsyncKeyState(VK_RBUTTON.0 as i32) } < 0;
+            let external_press = (left_down && !left_was_down) || (right_down && !right_was_down);
+            left_was_down = left_down;
+            right_was_down = right_down;
+
+            if external_press {
+                let Ok(menu) = find_floating_window(FLOATING_MENU_WINDOW_TITLE) else {
+                    thread::sleep(MENU_DISMISS_POLL_INTERVAL);
+                    continue;
+                };
+                // SAFETY: menu is owned by this process and visibility is read-only here.
+                if unsafe { IsWindowVisible(menu).as_bool() } {
+                    let mut cursor = POINT::default();
+                    let mut menu_rect = RECT::default();
+                    let mut ball_rect = RECT::default();
+                    let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE).ok();
+                    // SAFETY: cursor/RECTs are writable output storage for live app windows.
+                    let menu_hit = unsafe {
+                        GetCursorPos(&mut cursor).is_ok()
+                            && GetWindowRect(menu, &mut menu_rect).is_ok()
+                            && point_in_rect(cursor, menu_rect)
+                    };
+                    let ball_hit = ball.is_some_and(|ball| {
+                        // SAFETY: ball belongs to this process and ball_rect is writable storage.
+                        unsafe {
+                            GetWindowRect(ball, &mut ball_rect).is_ok()
+                                && point_in_rect(cursor, ball_rect)
+                        }
+                    });
+                    if !menu_hit && !ball_hit {
+                        let _ = set_context_menu_visible(false);
+                        tracing::debug!("floating context menu dismissed by external mouse click");
+                    }
+                }
+            }
+            thread::sleep(MENU_DISMISS_POLL_INTERVAL);
+        }
+    });
 }
 
 fn persist_floating_disabled(state: &Arc<RwLock<AppState>>) -> Result<()> {
@@ -202,6 +293,118 @@ fn persist_floating_disabled(state: &Arc<RwLock<AppState>>) -> Result<()> {
     config::save_settings(&app_state.paths, &next)?;
     drop(app_state);
     set_controller_visible(false)
+}
+
+fn persist_current_floating_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
+    let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
+    let mut rect = RECT::default();
+    // SAFETY: ball is this process's floating popup and rect is writable output storage.
+    unsafe {
+        GetWindowRect(ball, &mut rect).context("GetWindowRect floating position failed")?;
+    }
+
+    let mut app_state = state
+        .write()
+        .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
+    if app_state.settings.floating_ball_x == Some(rect.left)
+        && app_state.settings.floating_ball_y == Some(rect.top)
+    {
+        return Ok(());
+    }
+    app_state.settings.floating_ball_x = Some(rect.left);
+    app_state.settings.floating_ball_y = Some(rect.top);
+    let next = app_state.settings.clone();
+    if let Ok(mut runtime) = app_state.runtime_settings.write() {
+        *runtime = next.clone();
+    }
+    config::save_settings(&app_state.paths, &next)?;
+    tracing::info!(x = rect.left, y = rect.top, "floating ball position saved");
+    Ok(())
+}
+
+fn persist_current_floating_position_after_drag(state: Arc<RwLock<AppState>>) {
+    thread::spawn(move || {
+        thread::sleep(POSITION_PERSIST_DELAY);
+        if let Err(error) = persist_current_floating_position(&state) {
+            tracing::warn!(%error, "failed to persist floating-ball position");
+        }
+    });
+}
+
+fn restore_floating_ball_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
+    let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
+    let mut rect = RECT::default();
+    // SAFETY: ball is this process's floating popup and rect is writable output storage.
+    unsafe {
+        GetWindowRect(ball, &mut rect).context("GetWindowRect before position restore failed")?;
+    }
+    let width = (rect.right - rect.left).max(1);
+    let height = (rect.bottom - rect.top).max(1);
+
+    // SAFETY: GetSystemMetrics reads screen geometry only.
+    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN),
+        )
+    };
+    let max_x = virtual_left
+        .saturating_add(virtual_width)
+        .saturating_sub(width)
+        .max(virtual_left);
+    let max_y = virtual_top
+        .saturating_add(virtual_height)
+        .saturating_sub(height)
+        .max(virtual_top);
+
+    let saved = state
+        .read()
+        .ok()
+        .map(|state| {
+            (
+                state.settings.floating_ball_x,
+                state.settings.floating_ball_y,
+            )
+        })
+        .unwrap_or((None, None));
+    let saved_position = match saved {
+        (Some(x), Some(y)) if x >= virtual_left && x <= max_x && y >= virtual_top && y <= max_y => {
+            Some((x, y))
+        }
+        _ => None,
+    };
+
+    let default_x = primary_width
+        .saturating_sub(width)
+        .saturating_sub(FLOATING_DEFAULT_EDGE_GAP)
+        .clamp(virtual_left, max_x);
+    let default_y = (primary_height.saturating_sub(height) / 2).clamp(virtual_top, max_y);
+    let (x, y) = saved_position.unwrap_or((default_x, default_y));
+
+    // SAFETY: only the app-owned ball position/Z-order changes; its size and region stay intact.
+    unsafe {
+        SetWindowPos(
+            ball,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos floating position restore failed")?;
+    }
+    tracing::info!(
+        x,
+        y,
+        restored = saved_position.is_some(),
+        "floating ball startup position applied"
+    );
+    Ok(())
 }
 
 pub fn start_stable_window_watcher(snapshot: platform::WindowSnapshot) {
@@ -236,6 +439,7 @@ pub fn start_stable_window_watcher(snapshot: platform::WindowSnapshot) {
 }
 
 pub struct FloatingBall {
+    state: Arc<RwLock<AppState>>,
     list_visible: bool,
     last_pointer_inside: Instant,
     native_ready: bool,
@@ -304,6 +508,7 @@ impl FloatingBall {
         .detach();
 
         Self {
+            state,
             list_visible: false,
             last_pointer_inside: Instant::now(),
             native_ready: false,
@@ -317,9 +522,13 @@ impl Render for FloatingBall {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
         if !self.native_ready && platform::configure_floating_ball_window().is_ok() {
-            self.native_ready = true;
+            match restore_floating_ball_position(&self.state) {
+                Ok(()) => self.native_ready = true,
+                Err(error) => tracing::warn!(%error, "floating-ball position restore will retry"),
+            }
         }
 
+        let release_state = Arc::clone(&self.state);
         div()
             .id("floating-ball-v4")
             .size_full()
@@ -333,11 +542,14 @@ impl Render for FloatingBall {
             .justify_center()
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, |_, _, _| {
+                let _ = set_context_menu_visible(false);
                 if let Err(error) = platform::begin_floating_drag() {
                     tracing::error!(%error, "failed to begin floating-ball drag");
                 }
             })
-            .on_mouse_up(MouseButton::Left, |_, _, _| {
+            .on_mouse_up(MouseButton::Left, move |_, _, _| {
+                persist_current_floating_position_after_drag(Arc::clone(&release_state));
+                let _ = set_context_menu_visible(false);
                 if let Err(error) = platform::handle_floating_ball_click() {
                     tracing::error!(%error, "failed to open main window from floating ball");
                 }
@@ -462,17 +674,28 @@ impl Render for FloatingList {
 
 pub struct FloatingContextMenu {
     state: Arc<RwLock<AppState>>,
+    native_ready: bool,
 }
 
 impl FloatingContextMenu {
     pub fn new(state: Arc<RwLock<AppState>>) -> Self {
-        Self { state }
+        start_context_menu_dismiss_watcher();
+        Self {
+            state,
+            native_ready: false,
+        }
     }
 }
 
 impl Render for FloatingContextMenu {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(FLOATING_MENU_WINDOW_TITLE);
+        if !self.native_ready {
+            window.resize(size(px(FLOATING_MENU_WIDTH), px(floating_menu_height())));
+            if configure_context_menu_window().is_ok() {
+                self.native_ready = true;
+            }
+        }
         let close_state = Arc::clone(&self.state);
 
         v_flex()
@@ -485,7 +708,7 @@ impl Render for FloatingContextMenu {
                 div()
                     .id("floating-menu-show-main")
                     .w_full()
-                    .h(px(34.0))
+                    .h(px(FLOATING_MENU_ITEM_HEIGHT))
                     .px_3()
                     .rounded_md()
                     .bg(rgb(0x0f172a))
@@ -506,7 +729,7 @@ impl Render for FloatingContextMenu {
                 div()
                     .id("floating-menu-close")
                     .w_full()
-                    .h(px(34.0))
+                    .h(px(FLOATING_MENU_ITEM_HEIGHT))
                     .px_3()
                     .rounded_md()
                     .bg(rgb(0x0f172a))
@@ -526,7 +749,7 @@ impl Render for FloatingContextMenu {
                 div()
                     .id("floating-menu-exit")
                     .w_full()
-                    .h(px(34.0))
+                    .h(px(FLOATING_MENU_ITEM_HEIGHT))
                     .px_3()
                     .rounded_md()
                     .bg(rgb(0x0f172a))
@@ -613,7 +836,7 @@ pub fn floating_context_menu_window_options(cx: &App) -> WindowOptions {
         .map(|display| display.bounds())
         .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), size(px(1920.), px(1080.))));
     let width = px(FLOATING_MENU_WIDTH);
-    let height = px(FLOATING_MENU_HEIGHT);
+    let height = px(floating_menu_height());
     let origin = point(
         display_bounds.origin.x + display_bounds.size.width - width - px(96.),
         display_bounds.origin.y + px(100.),

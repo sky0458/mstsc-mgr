@@ -16,10 +16,10 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
 - Floating-controller opacity is configurable from 10% to 100% with a Settings slider and defaults to 50%; the same value is applied to both the RDP ball and its hover session popup.
 - The floating controller remains enabled by default and can be hidden or shown from Settings at runtime without restarting the application.
-- Right-clicking the floating ball opens an independent custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu does not resize, reshape, or replace the 64px floating-ball window.
+- Right-clicking the floating ball opens an independent compact custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu is sized like a context menu, stays tight against the ball, and dismisses when either mouse button is pressed elsewhere.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
-- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window.
+- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window. Its X/Y position is persisted after dragging and restored on the next launch, with a first-run fallback near the right edge of the primary display.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Current MSTSC windows are placed into a stable PID/HWND order before the shared snapshot is published. Hover-list numbers and `Alt+Shift+1..9` therefore use the same ordering and no longer change merely because focus or Windows Z-order changes.
 - Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
@@ -62,12 +62,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.9`.
+- Push a matching SemVer tag such as `v0.2.10`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.10 2026-08-23 11:16:00
+
+- Forced the simulated floating-ball context menu to a compact 180px context-menu footprint with content-derived height, native Win32 size enforcement, and a 2px attachment gap that flips sides at screen edges.
+- Added automatic menu dismissal when either the left or right mouse button is pressed outside both the floating menu and the floating ball.
+- Added persisted floating-ball X/Y coordinates after dragging, startup restoration with virtual-desktop bounds validation, and a first-run fallback near the primary display's right edge with vertical centering.
 
 ### version 0.2.9 2026-08-23 08:58:00
 
@@ -137,7 +143,7 @@ Entries are ordered newest to oldest.
 - Hardened MSTSC activation for both floating tabs and global hotkeys by temporarily attaching the app thread input queue to the current foreground/target threads before restoring and foregrounding the selected RDP window.
 - Switched Windows builds to the GUI subsystem so launching the release executable no longer creates an accompanying cmd/terminal console window.
 - Restored normal main-window movement/resizing by using the native Windows title bar instead of the undraggable transparent component title bar configuration.
-- Added a native system-tray icon and a `Close main window to system tray` setting. The setting defaults to enabled; clicking X hides the main window, clicking the tray icon restores it, and disabling the setting makes X exit the app.
+- Added a native system-tray icon and a `Close main window to system tray` setting. The setting defaults to enabled; clicking X hides the main window, clicking the tray icon restores the main window, and disabling the setting makes X exit the app.
 - Added the Win32 Shell and LibraryLoader bindings required for tray integration while keeping the project dependency/runtime boundary unchanged.
 
 ### version 0.1.5 2026-08-22 17:31:11

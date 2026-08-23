@@ -34,7 +34,7 @@ pub fn delete_credential(host: &str) {
     // SAFETY: target is a valid NUL-terminated UTF-16 string for the duration of the synchronous
     // CredDeleteW call. Failure is intentionally ignored because the credential may not exist yet.
     unsafe {
-        let _ = CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, 0);
+        let _ = CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, None);
     }
 }
 

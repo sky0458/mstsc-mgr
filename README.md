@@ -61,9 +61,9 @@ cargo build --release
 A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025` and publishes two x64 ZIP assets from the same release executable:
 
 - `mstsc-mgr-windows-x64.zip`: standard package for current Windows 10/11 and newer Windows Server versions. It relies on the system ICU shipped by modern Windows.
-- `mstsc-mgr-windows-legacy-x64.zip`: compatibility package for Windows Server 2016 / Windows 10 1607. It additionally ships a tiny project-built `icuuc.dll` compatibility shim that implements the only ICU entry point imported by GPUI 0.2.2 (`u_strlen`).
+- `mstsc-mgr-windows-legacy-x64.zip`: compatibility package for **Windows Server 2016 / Windows 10 1607 (x64)**. It additionally ships a tiny project-built `icuuc.dll` compatibility shim that implements the only ICU entry point imported by GPUI 0.2.2 (`u_strlen`). Keep `icuuc.dll` beside `mstsc-mgr.exe` when using this package.
 
-CI and Release validate that `mstsc-mgr.exe` imports `icuuc.dll!u_strlen` and that the compatibility shim exports `u_strlen` before either package is uploaded. The standard package deliberately does not contain the shim.
+CI and Release validate that `mstsc-mgr.exe` imports `icuuc.dll!u_strlen` and that the compatibility shim exports `u_strlen` before either package is uploaded. The standard package deliberately does not contain the shim. The legacy package addresses the ICU loader incompatibility on Windows Server 2016 / Windows 10 1607; that OS target still requires normal application smoke testing because GPUI itself does not publish an official Server 2016 support guarantee.
 
 Two release paths are supported:
 

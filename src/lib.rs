@@ -13,4 +13,6 @@ pub mod logging;
 #[cfg(windows)]
 pub mod platform;
 #[cfg(windows)]
+pub mod platform_actions;
+#[cfg(windows)]
 pub mod ui;

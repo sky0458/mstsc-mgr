@@ -1,10 +1,8 @@
 name: External Win2016 Native
 
 on:
-  push:
-    branches: ["external/win2016-native"]
   pull_request:
-  workflow_dispatch:
+    branches: ["external/win2016-ci-base"]
 
 permissions:
   contents: read
@@ -41,22 +39,11 @@ jobs:
           }
           if (-not $dumpbinPath) { throw "dumpbin.exe not found" }
           $imports = & $dumpbinPath /DEPENDENTS $exe | Out-String
-          $imports | Write-Host
           foreach ($blocked in @("d3d11.dll", "dxgi.dll", "dcomp.dll", "icuuc.dll", "WebView2Loader.dll")) {
-            if ($imports -match [regex]::Escape($blocked)) {
-              throw "Server 2016 build unexpectedly imports $blocked"
-            }
+            if ($imports -match [regex]::Escape($blocked)) { throw "unexpected import $blocked" }
           }
-      - name: Package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist/mstsc-mgr-external-win2016-x64 | Out-Null
-          Copy-Item target/release/mstsc-mgr-external.exe dist/mstsc-mgr-external-win2016-x64/
-          Copy-Item README.md, LICENSE dist/mstsc-mgr-external-win2016-x64/
-          Copy-Item assets/mstsc-mgr.ico dist/mstsc-mgr-external-win2016-x64/
-          Compress-Archive -Path dist/mstsc-mgr-external-win2016-x64/* -DestinationPath dist/mstsc-mgr-external-win2016-x64.zip -Force
-      - name: Upload package
+      - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: mstsc-mgr-external-win2016-x64
-          path: dist/mstsc-mgr-external-win2016-x64.zip
+          path: target/release/mstsc-mgr-external.exe

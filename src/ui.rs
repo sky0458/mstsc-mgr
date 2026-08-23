@@ -653,12 +653,7 @@ fn refresh_list(select: Option<usize>) -> Result<()> {
     // SAFETY: list is a live LISTBOX child control. LB_* messages are synchronous and any UTF-16
     // pointer used by LB_ADDSTRING remains valid until SendMessageW returns.
     unsafe {
-        let _ = SendMessageW(
-            list,
-            LB_RESETCONTENT_MSG,
-            Some(WPARAM(0)),
-            Some(LPARAM(0)),
-        );
+        let _ = SendMessageW(list, LB_RESETCONTENT_MSG, Some(WPARAM(0)), Some(LPARAM(0)));
         for entry in &entries {
             let wide = wide_null(entry);
             let _ = SendMessageW(
@@ -678,12 +673,7 @@ fn set_list_selection(index: Option<usize>) -> Result<()> {
     let value = index.unwrap_or(usize::MAX);
     // SAFETY: list is a live LISTBOX child and LB_SETCURSEL does not retain any pointers.
     unsafe {
-        let _ = SendMessageW(
-            list,
-            LB_SETCURSEL_MSG,
-            Some(WPARAM(value)),
-            Some(LPARAM(0)),
-        );
+        let _ = SendMessageW(list, LB_SETCURSEL_MSG, Some(WPARAM(value)), Some(LPARAM(0)));
     }
     APP.with(|cell| {
         if let Some(app) = cell.borrow_mut().as_mut() {
@@ -696,15 +686,7 @@ fn set_list_selection(index: Option<usize>) -> Result<()> {
 fn current_list_selection() -> Result<Option<usize>> {
     let list = handles()?.list;
     // SAFETY: list is a live LISTBOX child and LB_GETCURSEL only returns an integer index.
-    let value = unsafe {
-        SendMessageW(
-            list,
-            LB_GETCURSEL_MSG,
-            Some(WPARAM(0)),
-            Some(LPARAM(0)),
-        )
-        .0
-    };
+    let value = unsafe { SendMessageW(list, LB_GETCURSEL_MSG, Some(WPARAM(0)), Some(LPARAM(0))).0 };
     if value < 0 {
         Ok(None)
     } else {

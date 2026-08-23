@@ -1,7 +1,7 @@
 [package]
 name = "mstsc-mgr-external"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.90"
 description = "Native Rust/Win32 external MSTSC account manager for Windows Server 2016 and Windows 10 1607+"
 license = "MIT"

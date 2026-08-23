@@ -73,6 +73,9 @@ pub fn host_desktop() -> Result<usize> {
         }
     }
 
-    tracing::info!(count = windows.len(), "switched to host desktop by minimizing MSTSC windows");
+    tracing::info!(
+        count = windows.len(),
+        "switched to host desktop by minimizing MSTSC windows"
+    );
     Ok(windows.len())
 }

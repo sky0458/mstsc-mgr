@@ -8,6 +8,10 @@ license = "MIT"
 repository = "https://github.com/sky0458/mstsc-mgr"
 build = "build.rs"
 
+[features]
+default = []
+legacy-windows = []
+
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

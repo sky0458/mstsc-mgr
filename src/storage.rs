@@ -21,8 +21,7 @@ pub fn save(store: &ConnectionStore) -> Result<()> {
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, bytes).with_context(|| format!("failed to write {}", temp.display()))?;
     if path.exists() {
-        fs::remove_file(&path)
-            .with_context(|| format!("failed to replace {}", path.display()))?;
+        fs::remove_file(&path).with_context(|| format!("failed to replace {}", path.display()))?;
     }
     fs::rename(&temp, &path).with_context(|| format!("failed to commit {}", path.display()))?;
     Ok(())

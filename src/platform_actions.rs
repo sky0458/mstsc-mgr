@@ -2,11 +2,14 @@ use crate::platform;
 use anyhow::{Context as _, Result};
 use windows::Win32::{
     Foundation::HWND,
-    UI::WindowsAndMessaging::{
-        BringWindowToTop, EnableWindow, FindWindowW, GWL_STYLE, GetShellWindow, GetWindowLongW,
-        ReleaseCapture, SW_MINIMIZE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    UI::{
+        Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture},
+        WindowsAndMessaging::{
+            BringWindowToTop, FindWindowW, GWL_STYLE, GetShellWindow, GetWindowLongW, SW_MINIMIZE,
+            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION, WS_MAXIMIZEBOX,
+            WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        },
     },
 };
 use windows::core::HSTRING;

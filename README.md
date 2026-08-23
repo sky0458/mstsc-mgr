@@ -51,6 +51,7 @@ Release 构建静态链接 MSVC CRT，以降低 Windows Server 2016 上缺少 VC
 - CI 针对 Windows x64 构建，并检查最终 EXE 不依赖 DirectX、ICU 或 WebView 运行库。
 - 增加隔离分支的 pull-request CI 验证路径；该 PR 仅用于构建验证，不合并回主线。
 - 按 rustfmt 整理初始 Win32 源码，并移除未使用的 UI 常量。
+- 按 `windows-rs 0.61` 的实际 Win32 API 签名修正 HMENU、CredDeleteW 和 SendMessageW 调用。
 
 ## License
 

@@ -46,9 +46,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/release/mstsc-mgr.exe dist/mstsc-mgr.exe
+          Copy-Item assets/mstsc-mgr.ico dist/mstsc-mgr.ico
           Copy-Item README.md dist/README.md
           Copy-Item LICENSE dist/LICENSE
-          Compress-Archive -Path dist/mstsc-mgr.exe,dist/README.md,dist/LICENSE -DestinationPath mstsc-mgr-windows-x64.zip
+          Compress-Archive -Path dist/mstsc-mgr.exe,dist/mstsc-mgr.ico,dist/README.md,dist/LICENSE -DestinationPath mstsc-mgr-windows-x64.zip
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:

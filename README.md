@@ -5,6 +5,7 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 ## Features
 
 - Native Rust/GPUI desktop app; no .NET/WPF/WinUI, Electron, Java, Python or Node runtime. Windows release builds use the GUI subsystem, so launching `mstsc-mgr.exe` does not open a console/terminal window.
+- Uses an original project-specific application icon with no third-party product/logo artwork. A multi-resolution Windows ICO is embedded directly into `mstsc-mgr.exe` at build time and is also shipped in the release package.
 - Save multiple RDP connections with host, port, username, password and optional MSTSC arguments.
 - Passwords and the local vault are encrypted with Windows DPAPI; plaintext secrets are not written to disk.
 - Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
@@ -57,16 +58,22 @@ cargo build --release
 
 ## Release
 
-A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
+A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, the project ICO, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.8`.
+- Push a matching SemVer tag such as `v0.2.9`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.9 2026-08-23 08:58:00
+
+- Added a new original project-specific application icon designed specifically for mstsc-mgr's remote-session/security use case, without incorporating third-party product logos or trademark artwork.
+- Added a multi-resolution Windows ICO asset and a Windows resource build step using `winresource`, so the icon is embedded directly into the release `mstsc-mgr.exe` and appears as the executable/application icon in Windows.
+- Updated release packaging to ship `mstsc-mgr.ico` alongside the executable, README and LICENSE for reuse by shortcuts or future installers.
 
 ### version 0.2.8 2026-08-23 02:42:00
 

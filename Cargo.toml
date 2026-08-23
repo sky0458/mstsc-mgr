@@ -1,25 +1,20 @@
 [package]
-name = "mstsc-mgr"
-version = "0.2.12"
+name = "mstsc-mgr-external"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
-description = "A native Windows MSTSC external-session manager built with Rust and GPUI"
+description = "Minimal native Rust MSTSC credential manager for Windows Server 2016 / Windows 10 1607+"
 license = "MIT"
 repository = "https://github.com/sky0458/mstsc-mgr"
 build = "build.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
-gpui = "0.2.2"
-gpui-component = "0.5.1"
-gpui-component-assets = "0.5.1"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -27,9 +22,6 @@ windows = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
-    "Win32_System_Threading",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

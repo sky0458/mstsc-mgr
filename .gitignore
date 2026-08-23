@@ -1,6 +1,5 @@
-/target/
-/.idea/
-/.vscode/
-*.pdb
+target/
 *.log
+.vscode/
+.idea/
 .DS_Store

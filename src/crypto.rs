@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use windows::{
     Win32::{
         Foundation::{HLOCAL, LocalFree},
@@ -9,7 +10,23 @@ use windows::{
     core::PWSTR,
 };
 
-pub fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
+pub fn protect_password(password: &str) -> Result<String> {
+    if password.is_empty() {
+        bail!("密码不能为空");
+    }
+    let protected = protect(password.as_bytes())?;
+    Ok(STANDARD.encode(protected))
+}
+
+pub fn unprotect_password(encoded: &str) -> Result<String> {
+    let ciphertext = STANDARD
+        .decode(encoded)
+        .context("密码密文不是有效的 Base64")?;
+    let cleartext = unprotect(&ciphertext)?;
+    String::from_utf8(cleartext).context("DPAPI 解密结果不是有效 UTF-8")
+}
+
+fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
     if cleartext.is_empty() {
         bail!("refusing to encrypt an empty payload");
     }
@@ -20,8 +37,8 @@ pub fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
     };
     let mut output = CRYPT_INTEGER_BLOB::default();
 
-    // SAFETY: input points to `cleartext` for the duration of the call. Optional pointers are
-    // null. Windows allocates output with LocalAlloc and we copy it before LocalFree.
+    // SAFETY: input points to `cleartext` for the duration of the call. Optional pointers are null.
+    // Windows allocates output with LocalAlloc and it is copied before LocalFree below.
     unsafe {
         CryptProtectData(
             &input,
@@ -38,7 +55,7 @@ pub fn protect(cleartext: &[u8]) -> Result<Vec<u8>> {
     copy_and_free_blob(output)
 }
 
-pub fn unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
+fn unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
     if ciphertext.is_empty() {
         bail!("encrypted payload is empty");
     }
@@ -76,8 +93,8 @@ fn copy_and_free_blob(blob: CRYPT_INTEGER_BLOB) -> Result<Vec<u8>> {
         bail!("DPAPI returned an empty output blob");
     }
 
-    // SAFETY: DPAPI returned a valid allocation of `cbData` bytes in `pbData`. We copy before
-    // freeing with LocalFree, as required by the API contract.
+    // SAFETY: DPAPI returned a valid allocation of `cbData` bytes in `pbData`. We copy it before
+    // freeing with LocalFree, as required by the DPAPI contract.
     unsafe {
         let slice = std::slice::from_raw_parts(blob.pbData, blob.cbData as usize);
         let bytes = slice.to_vec();

@@ -1,683 +1,699 @@
 use crate::{
-    config::{self, AppPaths},
-    domain::{AppSettings, KeepAliveInput, SavedConnection, VaultPayload},
-    platform::{self, RuntimeSettings, WindowSnapshot},
+    crypto,
+    model::{ConnectionStore, SavedConnection, validate_fields},
+    platform, storage,
 };
-use gpui::{
-    App, AppContext, Context, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
-    Styled, Window, WindowBounds, WindowOptions, div, px, rgb, size,
-};
-use gpui_component::{
-    Root, WindowExt,
-    button::{Button, ButtonVariants},
-    checkbox::Checkbox,
-    dialog::DialogButtonProps,
-    h_flex,
-    input::{Input, InputState},
-    scroll::ScrollableElement,
-    slider::{Slider, SliderState},
-    v_flex,
-};
-use std::{
-    path::PathBuf,
-    sync::{Arc, RwLock},
+use anyhow::{Context, Result, bail};
+use std::{cell::RefCell, ffi::c_void};
+use windows::{
+    Win32::{
+        Foundation::{HINSTANCE, HMENU, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::HBRUSH,
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+            GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, IDYES, LoadCursorW, MB_ICONERROR,
+            MB_ICONQUESTION, MB_OK, MB_YESNO, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
+            SW_SHOW, SendMessageW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
+            WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION,
+            WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+        },
+    },
+    core::{HSTRING, PCWSTR, w},
 };
 
-const BG: u32 = 0x0f172a;
-const PANEL: u32 = 0x172033;
-const TEXT: u32 = 0xe5e7eb;
-const MUTED: u32 = 0x94a3b8;
-const ACCENT: u32 = 0x38bdf8;
+const APP_TITLE: &str = "mstsc-mgr external";
+const WINDOW_CLASS: PCWSTR = w!("MstscMgrExternalWindow");
 
-pub struct AppState {
-    pub paths: AppPaths,
-    pub settings: AppSettings,
-    pub vault: VaultPayload,
-    pub runtime_settings: RuntimeSettings,
-    pub windows: WindowSnapshot,
+const ID_LIST: u16 = 100;
+const ID_NAME: u16 = 101;
+const ID_HOST: u16 = 102;
+const ID_USERNAME: u16 = 103;
+const ID_PASSWORD: u16 = 104;
+const ID_NEW: u16 = 201;
+const ID_SAVE: u16 = 202;
+const ID_DELETE: u16 = 203;
+const ID_CONNECT: u16 = 204;
+
+const LBN_SELCHANGE_CODE: u16 = 1;
+const LBN_DBLCLK_CODE: u16 = 2;
+const LB_ADDSTRING_MSG: u32 = 0x0180;
+const LB_RESETCONTENT_MSG: u32 = 0x0184;
+const LB_SETCURSEL_MSG: u32 = 0x0186;
+const LB_GETCURSEL_MSG: u32 = 0x0188;
+const LBS_NOTIFY_STYLE: WINDOW_STYLE = WINDOW_STYLE(0x0001);
+const ES_PASSWORD_STYLE: WINDOW_STYLE = WINDOW_STYLE(0x0020);
+const ES_AUTOHSCROLL_STYLE: WINDOW_STYLE = WINDOW_STYLE(0x0080);
+
+#[derive(Clone, Copy)]
+struct UiHandles {
+    main: HWND,
+    list: HWND,
+    name: HWND,
+    host: HWND,
+    username: HWND,
+    password: HWND,
+    status: HWND,
 }
 
-impl AppState {
-    pub fn load() -> anyhow::Result<Self> {
-        let paths = AppPaths::discover()?;
-        paths.ensure()?;
-        let settings = config::load_settings(&paths).unwrap_or_default();
-        let vault = config::load_vault(&paths).unwrap_or_default();
-        Ok(Self {
-            paths,
-            runtime_settings: Arc::new(RwLock::new(settings.clone())),
-            windows: Arc::new(RwLock::new(Vec::new())),
-            settings,
-            vault,
-        })
-    }
+struct AppState {
+    store: ConnectionStore,
+    handles: Option<UiHandles>,
+    selected: Option<usize>,
 }
 
-pub struct ManagerView {
-    state: Arc<RwLock<AppState>>,
-    status: SharedString,
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
-impl ManagerView {
-    pub fn new(state: Arc<RwLock<AppState>>) -> Self {
-        Self {
-            state,
-            status: "Ready".into(),
+thread_local! {
+    static APP: RefCell<Option<AppState>> = const { RefCell::new(None) };
+}
+
+pub fn run() -> Result<()> {
+    let store = storage::load()?;
+    APP.with(|cell| {
+        *cell.borrow_mut() = Some(AppState {
+            store,
+            handles: None,
+            selected: None,
+        });
+    });
+
+    // SAFETY: the registered class, instance and top-level HWND all live on this UI thread until
+    // the message loop exits. All string pointers used here are static or owned for each call.
+    unsafe {
+        let module = GetModuleHandleW(None).context("GetModuleHandleW failed")?;
+        let instance: HINSTANCE = module.into();
+        let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(window_proc),
+            hInstance: instance,
+            hCursor: cursor,
+            hbrBackground: HBRUSH(6usize as *mut c_void),
+            lpszClassName: WINDOW_CLASS,
+            ..Default::default()
+        };
+        if RegisterClassW(&class) == 0 {
+            bail!("RegisterClassW failed");
+        }
+
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            WINDOW_CLASS,
+            w!("mstsc-mgr external"),
+            WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            120,
+            120,
+            760,
+            430,
+            None,
+            None,
+            Some(instance),
+            None,
+        )
+        .context("CreateWindowExW main window failed")?;
+
+        let handles = create_controls(hwnd, instance)?;
+        APP.with(|cell| {
+            if let Some(app) = cell.borrow_mut().as_mut() {
+                app.handles = Some(handles);
+            }
+        });
+        refresh_list(None)?;
+        set_status("就绪");
+
+        let _ = ShowWindow(hwnd, SW_SHOW);
+
+        let mut message = MSG::default();
+        loop {
+            let code = GetMessageW(&mut message, None, 0, 0);
+            if code.0 <= 0 {
+                break;
+            }
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
     }
 
-    fn set_status(&mut self, status: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.status = status.into();
-        cx.notify();
+    Ok(())
+}
+
+pub fn show_fatal_error(message: &str) {
+    show_error(None, message);
+}
+
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_COMMAND => {
+            if let Err(error) = handle_command(wparam) {
+                show_error(Some(hwnd), &format!("{error:#}"));
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            // SAFETY: hwnd is the live top-level application window supplied by the Win32 message
+            // dispatcher. DestroyWindow ends its lifetime and triggers WM_DESTROY.
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            // SAFETY: this UI thread owns the message loop; posting quit is the normal shutdown path.
+            unsafe { PostQuitMessage(0) };
+            LRESULT(0)
+        }
+        _ => {
+            // SAFETY: unhandled messages for this valid HWND must be forwarded to DefWindowProcW.
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+    }
+}
+
+fn handle_command(wparam: WPARAM) -> Result<()> {
+    let id = (wparam.0 & 0xffff) as u16;
+    let code = ((wparam.0 >> 16) & 0xffff) as u16;
+
+    match id {
+        ID_LIST if code == LBN_SELCHANGE_CODE => on_list_selection(),
+        ID_LIST if code == LBN_DBLCLK_CODE => {
+            on_list_selection()?;
+            on_connect()
+        }
+        ID_NEW if code == 0 => on_new(),
+        ID_SAVE if code == 0 => on_save(),
+        ID_DELETE if code == 0 => on_delete(),
+        ID_CONNECT if code == 0 => on_connect(),
+        _ => Ok(()),
+    }
+}
+
+fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("已保存连接"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 20, y: 18, width: 300, height: 22 },
+        0,
+    )?;
+    let list = create_control(
+        parent,
+        instance,
+        w!("LISTBOX"),
+        w!(""),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY_STYLE,
+        Rect { x: 20, y: 44, width: 310, height: 300 },
+        ID_LIST,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("名称"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 360, y: 35, width: 90, height: 22 },
+        0,
+    )?;
+    let name = create_control(
+        parent,
+        instance,
+        w!("EDIT"),
+        w!(""),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
+        Rect { x: 450, y: 30, width: 270, height: 26 },
+        ID_NAME,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("IP / 主机名"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 360, y: 82, width: 90, height: 22 },
+        0,
+    )?;
+    let host = create_control(
+        parent,
+        instance,
+        w!("EDIT"),
+        w!(""),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
+        Rect { x: 450, y: 77, width: 270, height: 26 },
+        ID_HOST,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("用户名"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 360, y: 129, width: 90, height: 22 },
+        0,
+    )?;
+    let username = create_control(
+        parent,
+        instance,
+        w!("EDIT"),
+        w!(""),
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
+        Rect { x: 450, y: 124, width: 270, height: 26 },
+        ID_USERNAME,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("密码"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 360, y: 176, width: 90, height: 22 },
+        0,
+    )?;
+    let password = create_control(
+        parent,
+        instance,
+        w!("EDIT"),
+        w!(""),
+        WS_CHILD
+            | WS_VISIBLE
+            | WS_BORDER
+            | WS_TABSTOP
+            | ES_AUTOHSCROLL_STYLE
+            | ES_PASSWORD_STYLE,
+        Rect { x: 450, y: 171, width: 270, height: 26 },
+        ID_PASSWORD,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("BUTTON"),
+        w!("新建"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        Rect { x: 360, y: 232, width: 80, height: 32 },
+        ID_NEW,
+    )?;
+    create_control(
+        parent,
+        instance,
+        w!("BUTTON"),
+        w!("保存"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        Rect { x: 450, y: 232, width: 80, height: 32 },
+        ID_SAVE,
+    )?;
+    create_control(
+        parent,
+        instance,
+        w!("BUTTON"),
+        w!("删除"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        Rect { x: 540, y: 232, width: 80, height: 32 },
+        ID_DELETE,
+    )?;
+    create_control(
+        parent,
+        instance,
+        w!("BUTTON"),
+        w!("连接"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        Rect { x: 630, y: 232, width: 90, height: 32 },
+        ID_CONNECT,
+    )?;
+
+    create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!("密码说明：编辑已有连接时留空表示不修改。"),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 360, y: 285, width: 360, height: 22 },
+        0,
+    )?;
+    let status = create_control(
+        parent,
+        instance,
+        w!("STATIC"),
+        w!(""),
+        WS_CHILD | WS_VISIBLE,
+        Rect { x: 20, y: 360, width: 700, height: 24 },
+        0,
+    )?;
+
+    Ok(UiHandles {
+        main: parent,
+        list,
+        name,
+        host,
+        username,
+        password,
+        status,
+    })
+}
+
+fn create_control(
+    parent: HWND,
+    instance: HINSTANCE,
+    class: PCWSTR,
+    text: PCWSTR,
+    style: WINDOW_STYLE,
+    rect: Rect,
+    id: u16,
+) -> Result<HWND> {
+    let menu = if id == 0 {
+        None
+    } else {
+        Some(HMENU(usize::from(id) as *mut c_void))
+    };
+
+    // SAFETY: parent and instance belong to this process. class/text are valid NUL-terminated
+    // strings. Child controls are owned by parent and live until the top-level window is destroyed.
+    unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            class,
+            text,
+            style,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            Some(parent),
+            menu,
+            Some(instance),
+            None,
+        )
+        .context("CreateWindowExW child control failed")
+    }
+}
+
+fn on_new() -> Result<()> {
+    APP.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let app = guard.as_mut().context("application state missing")?;
+        app.selected = None;
+        Ok::<(), anyhow::Error>(())
+    })?;
+    clear_form()?;
+    set_list_selection(None)?;
+    set_status("新建连接：填写信息后点击“保存”");
+    Ok(())
+}
+
+fn on_list_selection() -> Result<()> {
+    let index = current_list_selection()?.context("未选择连接")?;
+    let (handles, connection) = APP.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let app = guard.as_mut().context("application state missing")?;
+        let connection = app
+            .store
+            .connections
+            .get(index)
+            .cloned()
+            .context("连接索引无效")?;
+        app.selected = Some(index);
+        let handles = app.handles.context("UI handles missing")?;
+        Ok::<_, anyhow::Error>((handles, connection))
+    })?;
+
+    set_text(handles.name, &connection.name);
+    set_text(handles.host, &connection.host);
+    set_text(handles.username, &connection.username);
+    set_text(handles.password, "");
+    set_status("已载入连接；密码留空保存表示保持原密码");
+    Ok(())
+}
+
+fn on_save() -> Result<()> {
+    let handles = handles()?;
+    let name = get_text(handles.name).trim().to_owned();
+    let host = get_text(handles.host).trim().to_owned();
+    let username = get_text(handles.username).trim().to_owned();
+    let password = get_text(handles.password);
+    validate_fields(&name, &host, &username)?;
+
+    let (new_index, old_host) = APP.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let app = guard.as_mut().context("application state missing")?;
+        let selected = app.selected;
+        let encrypted = if password.is_empty() {
+            let index = selected.context("新建连接时密码不能为空")?;
+            app.store
+                .connections
+                .get(index)
+                .map(|item| item.password_dpapi.clone())
+                .context("连接索引无效")?
+        } else {
+            crypto::protect_password(&password)?
+        };
+
+        let connection = SavedConnection {
+            name,
+            host,
+            username,
+            password_dpapi: encrypted,
+        };
+
+        let (index, old_host) = if let Some(index) = selected {
+            let existing = app
+                .store
+                .connections
+                .get(index)
+                .context("连接索引无效")?;
+            let old_host = Some(existing.host.clone());
+            app.store.connections[index] = connection;
+            (index, old_host)
+        } else {
+            let index = app.store.connections.len();
+            app.store.connections.push(connection);
+            (index, None)
+        };
+        app.selected = Some(index);
+        storage::save(&app.store)?;
+        Ok::<_, anyhow::Error>((index, old_host))
+    })?;
+
+    if let Some(previous) = old_host {
+        let current_host = APP.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .and_then(|app| app.store.connections.get(new_index))
+                .map(|item| item.host.clone())
+        });
+        if current_host.as_deref() != Some(previous.as_str()) {
+            platform::delete_credential(&previous);
+        }
     }
 
-    fn open_connection_editor(
-        &mut self,
-        edit_id: Option<u64>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+    refresh_list(Some(new_index))?;
+    set_status("连接已保存");
+    Ok(())
+}
+
+fn on_delete() -> Result<()> {
+    let (handles, index, connection) = APP.with(|cell| {
+        let guard = cell.borrow();
+        let app = guard.as_ref().context("application state missing")?;
+        let index = app.selected.context("请先选择要删除的连接")?;
+        let connection = app
+            .store
+            .connections
+            .get(index)
+            .cloned()
+            .context("连接索引无效")?;
+        Ok::<_, anyhow::Error>((app.handles.context("UI handles missing")?, index, connection))
+    })?;
+
+    if !confirm(
+        handles.main,
+        &format!("确定删除连接“{}”吗？", connection.name),
     ) {
-        let existing = self
-            .state
-            .read()
-            .ok()
-            .and_then(|state| {
-                edit_id.and_then(|id| {
-                    state
-                        .vault
-                        .connections
-                        .iter()
-                        .find(|item| item.id == id)
-                        .cloned()
-                })
-            })
-            .unwrap_or_else(|| SavedConnection {
-                id: 0,
-                name: String::new(),
-                host: String::new(),
-                port: 3389,
-                username: String::new(),
-                password: String::new(),
-                mstsc_args: Vec::new(),
-            });
-
-        let name = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Display name")
-                .default_value(existing.name.clone())
-        });
-        let host = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Host or IP")
-                .default_value(existing.host.clone())
-        });
-        let port = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("3389")
-                .default_value(existing.port.to_string())
-        });
-        let username = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("DOMAIN\\user or user")
-                .default_value(existing.username.clone())
-        });
-        let password = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Password")
-                .default_value(existing.password.clone())
-                .masked(true)
-        });
-        let args = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Optional MSTSC args, separated by spaces (e.g. /f /multimon)")
-                .default_value(existing.mstsc_args.join(" "))
-        });
-
-        let manager = cx.entity().clone();
-        let state = Arc::clone(&self.state);
-        window.open_dialog(cx, move |dialog, _, _| {
-            let name = name.clone();
-            let host = host.clone();
-            let port = port.clone();
-            let username = username.clone();
-            let password = password.clone();
-            let args = args.clone();
-            let manager = manager.clone();
-            let state = Arc::clone(&state);
-            dialog
-                .title(if edit_id.is_some() {
-                    "Edit connection"
-                } else {
-                    "Add connection"
-                })
-                .confirm()
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Save")
-                        .cancel_text("Cancel"),
-                )
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child(field("Name", Input::new(&name)))
-                        .child(field("Host", Input::new(&host)))
-                        .child(field("Port", Input::new(&port)))
-                        .child(field("Username", Input::new(&username)))
-                        .child(field("Password", Input::new(&password)))
-                        .child(field("MSTSC arguments", Input::new(&args))),
-                )
-                .on_ok(move |_, _, app| {
-                    let name_value = name.read(app).value().to_string();
-                    let host_value = host.read(app).value().to_string();
-                    let port_value = port.read(app).value().to_string();
-                    let username_value = username.read(app).value().to_string();
-                    let password_value = password.read(app).value().to_string();
-                    let args_value = args.read(app).value().to_string();
-                    if host_value.trim().is_empty() {
-                        manager.update(app, |view, cx| view.set_status("Host is required", cx));
-                        return false;
-                    }
-                    let Ok(port_value) = port_value.trim().parse::<u16>() else {
-                        manager.update(app, |view, cx| view.set_status("Port must be 1-65535", cx));
-                        return false;
-                    };
-                    let save_result = state
-                        .write()
-                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                        .and_then(|mut app_state| {
-                            let id = edit_id.unwrap_or_else(|| app_state.vault.next_id());
-                            let item = SavedConnection {
-                                id,
-                                name: if name_value.trim().is_empty() {
-                                    host_value.clone()
-                                } else {
-                                    name_value.trim().to_string()
-                                },
-                                host: host_value.trim().to_string(),
-                                port: port_value,
-                                username: username_value,
-                                password: password_value,
-                                mstsc_args: args_value
-                                    .split_whitespace()
-                                    .map(ToOwned::to_owned)
-                                    .collect(),
-                            };
-                            if let Some(index) = app_state
-                                .vault
-                                .connections
-                                .iter()
-                                .position(|entry| entry.id == id)
-                            {
-                                app_state.vault.connections[index] = item;
-                            } else {
-                                app_state.vault.connections.push(item);
-                            }
-                            config::save_vault(&app_state.paths, &app_state.vault)
-                        });
-                    match save_result {
-                        Ok(()) => {
-                            manager.update(app, |view, cx| {
-                                view.set_status("Connection saved securely", cx)
-                            });
-                            true
-                        }
-                        Err(error) => {
-                            manager.update(app, |view, cx| {
-                                view.set_status(format!("Save failed: {error:#}"), cx)
-                            });
-                            false
-                        }
-                    }
-                })
-        });
+        return Ok(());
     }
 
-    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let settings = self
-            .state
-            .read()
-            .map(|state| state.settings.clone())
-            .unwrap_or_default();
-        let interval = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("60")
-                .default_value(settings.keepalive_interval_seconds.to_string())
-        });
-        let opacity = cx.new(|_| {
-            SliderState::new()
-                .min(10.0)
-                .max(100.0)
-                .step(5.0)
-                .default_value(f32::from(settings.floating_opacity_percent))
-        });
-        let draft = Arc::new(RwLock::new(settings));
-        let manager = cx.entity().clone();
-        let state = Arc::clone(&self.state);
+    APP.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let app = guard.as_mut().context("application state missing")?;
+        if index >= app.store.connections.len() {
+            bail!("连接索引无效");
+        }
+        app.store.connections.remove(index);
+        app.selected = None;
+        storage::save(&app.store)?;
+        Ok::<(), anyhow::Error>(())
+    })?;
 
-        window.open_dialog(cx, move |dialog, _, _| {
-            let draft_for_float = Arc::clone(&draft);
-            let draft_for_tabs = Arc::clone(&draft);
-            let draft_for_hotkeys = Arc::clone(&draft);
-            let draft_for_tray = Arc::clone(&draft);
-            let draft_for_logging = Arc::clone(&draft);
-            let draft_for_keepalive = Arc::clone(&draft);
-            let draft_for_input = Arc::clone(&draft);
-            let draft_for_ok = Arc::clone(&draft);
-            let interval_for_ok = interval.clone();
-            let opacity_for_view = opacity.clone();
-            let opacity_for_ok = opacity.clone();
-            let state_for_ok = Arc::clone(&state);
-            let manager_for_ok = manager.clone();
-            let current = draft.read().map(|v| v.clone()).unwrap_or_default();
-
-            dialog
-                .title("Settings")
-                .confirm()
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Save")
-                        .cancel_text("Cancel"),
-                )
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child(
-                            Checkbox::new("floating-controller")
-                                .label("Show floating controller")
-                                .checked(current.floating_controller)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_float.write() {
-                                        value.floating_controller = *checked;
-                                    }
-                                }),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    div().text_sm().text_color(rgb(MUTED)).child(
-                                        "Floating controller opacity (10-100%, default 50%)",
-                                    ),
-                                )
-                                .child(Slider::new(&opacity_for_view)),
-                        )
-                        .child(
-                            Checkbox::new("always-tabs")
-                                .label("Always show vertical MSTSC tabs")
-                                .checked(current.always_show_tabs)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_tabs.write() {
-                                        value.always_show_tabs = *checked;
-                                    }
-                                }),
-                        )
-                        .child(
-                            Checkbox::new("global-hotkeys")
-                                .label("Enable global hotkeys")
-                                .checked(current.global_hotkeys)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_hotkeys.write() {
-                                        value.global_hotkeys = *checked;
-                                    }
-                                }),
-                        )
-                        .child(
-                            Checkbox::new("close-to-tray")
-                                .label("Close main window to system tray")
-                                .checked(current.close_to_tray)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_tray.write() {
-                                        value.close_to_tray = *checked;
-                                    }
-                                }),
-                        )
-                        .child(
-                            Checkbox::new("diagnostic-logging")
-                                .label("Write diagnostic log file next to mstsc-mgr.exe")
-                                .checked(current.logging_enabled)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_logging.write() {
-                                        value.logging_enabled = *checked;
-                                    }
-                                }),
-                        )
-                        .child(
-                            Checkbox::new("keepalive")
-                                .label("Keep MSTSC sessions active")
-                                .checked(current.keepalive_enabled)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_keepalive.write() {
-                                        value.keepalive_enabled = *checked;
-                                    }
-                                }),
-                        )
-                        .child(field(
-                            "Keepalive interval (seconds, minimum 5)",
-                            Input::new(&interval),
-                        ))
-                        .child(
-                            Checkbox::new("keepalive-key")
-                                .label("Use Shift key event instead of mouse-move event")
-                                .checked(current.keepalive_input == KeepAliveInput::ShiftKey)
-                                .on_click(move |checked, _, _| {
-                                    if let Ok(mut value) = draft_for_input.write() {
-                                        value.keepalive_input = if *checked {
-                                            KeepAliveInput::ShiftKey
-                                        } else {
-                                            KeepAliveInput::MouseMove
-                                        };
-                                    }
-                                }),
-                        ),
-                )
-                .on_ok(move |_, _, app| {
-                    let interval_text = interval_for_ok.read(app).value().to_string();
-                    let Ok(seconds) = interval_text.trim().parse::<u64>() else {
-                        manager_for_ok.update(app, |view, cx| {
-                            view.set_status("Keepalive interval must be a number", cx)
-                        });
-                        return false;
-                    };
-                    if seconds < 5 {
-                        manager_for_ok.update(app, |view, cx| {
-                            view.set_status("Keepalive interval must be at least 5 seconds", cx)
-                        });
-                        return false;
-                    }
-                    let mut next = draft_for_ok.read().map(|v| v.clone()).unwrap_or_default();
-                    next.keepalive_interval_seconds = seconds;
-                    next.floating_opacity_percent = opacity_for_ok
-                        .read(app)
-                        .value()
-                        .start()
-                        .round()
-                        .clamp(10.0, 100.0)
-                        as u8;
-                    let result = state_for_ok
-                        .write()
-                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                        .and_then(|mut app_state| {
-                            app_state.settings = next.clone();
-                            if let Ok(mut runtime) = app_state.runtime_settings.write() {
-                                *runtime = next.clone();
-                            }
-                            config::save_settings(&app_state.paths, &next)
-                        });
-                    match result {
-                        Ok(()) => {
-                            manager_for_ok.update(app, |view, cx| {
-                                view.set_status(
-                                    "Settings saved; runtime switches apply immediately",
-                                    cx,
-                                )
-                            });
-                            true
-                        }
-                        Err(error) => {
-                            manager_for_ok.update(app, |view, cx| {
-                                view.set_status(format!("Settings save failed: {error:#}"), cx)
-                            });
-                            false
-                        }
-                    }
-                })
-        });
-    }
-
-    fn import_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chooser = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Import encrypted MSTSC vault".into()),
-        });
-        let manager = cx.entity().clone();
-        let state = Arc::clone(&self.state);
-        window
-            .spawn(cx, async move |cx| {
-                let selected = chooser.await;
-                let Ok(Ok(Some(paths))) = selected else {
-                    return;
-                };
-                let Some(path) = paths.first().cloned() else {
-                    return;
-                };
-                let result = config::import_vault(&path).and_then(|vault| {
-                    let mut app_state = state
-                        .write()
-                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
-                    app_state.vault = vault;
-                    config::save_vault(&app_state.paths, &app_state.vault)
-                });
-                let _ = cx.update(|_, app| {
-                    manager.update(app, |view, cx| match result {
-                        Ok(()) => view.set_status(
-                            format!("Imported encrypted vault from {}", path.display()),
-                            cx,
-                        ),
-                        Err(error) => view.set_status(format!("Import failed: {error:#}"), cx),
-                    });
-                });
-            })
-            .detach();
-    }
-
-    fn export_vault(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let directory = self
-            .state
-            .read()
-            .map(|state| state.paths.root.clone())
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let chooser = cx.prompt_for_new_path(&directory, Some("mstsc-mgr-vault.dpapi"));
-        let manager = cx.entity().clone();
-        let state = Arc::clone(&self.state);
-        window
-            .spawn(cx, async move |cx| {
-                let selected = chooser.await;
-                let Ok(Ok(Some(path))) = selected else {
-                    return;
-                };
-                let result = state
-                    .read()
-                    .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                    .and_then(|app_state| config::export_vault(&app_state.vault, &path));
-                let _ = cx.update(|_, app| {
-                    manager.update(app, |view, cx| match result {
-                        Ok(()) => view.set_status(
-                            format!("Encrypted export saved to {}", path.display()),
-                            cx,
-                        ),
-                        Err(error) => view.set_status(format!("Export failed: {error:#}"), cx),
-                    });
-                });
-            })
-            .detach();
-    }
+    platform::delete_credential(&connection.host);
+    refresh_list(None)?;
+    clear_form()?;
+    set_status("连接已删除");
+    Ok(())
 }
 
-impl Render for ManagerView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let connections = self
-            .state
-            .read()
-            .map(|state| state.vault.connections.clone())
-            .unwrap_or_default();
+fn on_connect() -> Result<()> {
+    let connection = APP.with(|cell| {
+        let guard = cell.borrow();
+        let app = guard.as_ref().context("application state missing")?;
+        let index = app.selected.context("请先选择一个已保存连接")?;
+        app.store
+            .connections
+            .get(index)
+            .cloned()
+            .context("连接索引无效")
+    })?;
 
-        let mut list = v_flex().gap_2();
-        if connections.is_empty() {
-            list = list.child(
-                div()
-                    .p_4()
-                    .rounded_lg()
-                    .bg(rgb(PANEL))
-                    .text_color(rgb(MUTED))
-                    .child("No saved connections yet. Add one to start."),
+    platform::connect(&connection)?;
+    set_status(&format!("已启动 MSTSC：{}", connection.host));
+    Ok(())
+}
+
+fn refresh_list(select: Option<usize>) -> Result<()> {
+    let (list, entries) = APP.with(|cell| {
+        let guard = cell.borrow();
+        let app = guard.as_ref().context("application state missing")?;
+        let list = app.handles.context("UI handles missing")?.list;
+        let entries = app
+            .store
+            .connections
+            .iter()
+            .map(|item| format!("{}  [{} @ {}]", item.name, item.username, item.host))
+            .collect::<Vec<_>>();
+        Ok::<_, anyhow::Error>((list, entries))
+    })?;
+
+    // SAFETY: list is a live LISTBOX child control. LB_* messages are synchronous and any UTF-16
+    // pointer used by LB_ADDSTRING remains valid until SendMessageW returns.
+    unsafe {
+        let _ = SendMessageW(list, LB_RESETCONTENT_MSG, WPARAM(0), LPARAM(0));
+        for entry in &entries {
+            let wide = wide_null(entry);
+            let _ = SendMessageW(
+                list,
+                LB_ADDSTRING_MSG,
+                WPARAM(0),
+                LPARAM(wide.as_ptr() as isize),
             );
         }
-        for connection in connections {
-            let id = connection.id;
-            let launch = connection.clone();
-            let state_for_delete = Arc::clone(&self.state);
-            list = list.child(
-                h_flex()
-                    .p_3()
-                    .gap_3()
-                    .items_center()
-                    .rounded_lg()
-                    .bg(rgb(PANEL))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .child(
-                                div()
-                                    .text_color(rgb(TEXT))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(connection.name.clone()),
-                            )
-                            .child(div().text_sm().text_color(rgb(MUTED)).child(format!(
-                                "{}  ·  {}",
-                                connection.endpoint(),
-                                connection.username
-                            ))),
-                    )
-                    .child(
-                        Button::new(("connect", id as usize))
-                            .primary()
-                            .label("Connect")
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                match platform::launch_connection(&launch) {
-                                    Ok(()) => {
-                                        view.set_status(format!("Launching {}", launch.name), cx)
-                                    }
-                                    Err(error) => {
-                                        view.set_status(format!("Launch failed: {error:#}"), cx)
-                                    }
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new(("edit", id as usize))
-                            .label("Edit")
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                view.open_connection_editor(Some(id), window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(("delete", id as usize))
-                            .danger()
-                            .label("Delete")
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                let result = state_for_delete
-                                    .write()
-                                    .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                                    .and_then(|mut app_state| {
-                                        app_state.vault.connections.retain(|item| item.id != id);
-                                        config::save_vault(&app_state.paths, &app_state.vault)
-                                    });
-                                match result {
-                                    Ok(()) => view.set_status("Connection deleted", cx),
-                                    Err(error) => {
-                                        view.set_status(format!("Delete failed: {error:#}"), cx)
-                                    }
-                                }
-                            })),
-                    ),
-            );
+    }
+    set_list_selection(select)?;
+    Ok(())
+}
+
+fn set_list_selection(index: Option<usize>) -> Result<()> {
+    let list = handles()?.list;
+    let value = index.unwrap_or(usize::MAX);
+    // SAFETY: list is a live LISTBOX child and LB_SETCURSEL does not retain any pointers.
+    unsafe {
+        let _ = SendMessageW(list, LB_SETCURSEL_MSG, WPARAM(value), LPARAM(0));
+    }
+    APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.selected = index;
         }
+    });
+    Ok(())
+}
 
-        div()
-            .size_full()
-            .bg(rgb(BG))
-            .text_color(rgb(TEXT))
-            .child(
-                v_flex()
-                    .size_full()
-                    .p_5()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                v_flex()
-                                    .child(
-                                        div()
-                                            .text_2xl()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .child("mstsc-mgr"),
-                                    )
-                                    .child(div().text_sm().text_color(rgb(MUTED)).child(
-                                        "Native Rust + GPUI · RDM-style external MSTSC management",
-                                    )),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("add")
-                                            .primary()
-                                            .label("Add connection")
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_connection_editor(None, window, cx)
-                                            })),
-                                    )
-                                    .child(Button::new("settings").label("Settings").on_click(
-                                        cx.listener(|view, _, window, cx| {
-                                            view.open_settings(window, cx)
-                                        }),
-                                    )),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("import")
-                                    .label("Import encrypted vault")
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.import_vault(window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("export")
-                                    .label("Export encrypted vault")
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.export_vault(window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(div().flex_1().overflow_y_scrollbar().child(list))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(ACCENT))
-                            .child(self.status.clone()),
-                    ),
-            )
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
+fn current_list_selection() -> Result<Option<usize>> {
+    let list = handles()?.list;
+    // SAFETY: list is a live LISTBOX child and LB_GETCURSEL only returns an integer index.
+    let value = unsafe { SendMessageW(list, LB_GETCURSEL_MSG, WPARAM(0), LPARAM(0)).0 };
+    if value < 0 {
+        Ok(None)
+    } else {
+        Ok(Some(value as usize))
     }
 }
 
-pub fn main_window_options(cx: &App) -> WindowOptions {
-    WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(860.), px(620.)), cx)),
-        titlebar: Some(gpui::TitlebarOptions {
-            title: Some(platform::MAIN_WINDOW_TITLE.into()),
-            appears_transparent: false,
-            traffic_light_position: None,
-        }),
-        is_movable: true,
-        is_resizable: true,
-        is_minimizable: true,
-        window_min_size: Some(size(px(640.), px(480.))),
-        ..Default::default()
+fn clear_form() -> Result<()> {
+    let handles = handles()?;
+    set_text(handles.name, "");
+    set_text(handles.host, "");
+    set_text(handles.username, "");
+    set_text(handles.password, "");
+    Ok(())
+}
+
+fn handles() -> Result<UiHandles> {
+    APP.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|app| app.handles)
+            .context("UI handles missing")
+    })
+}
+
+fn set_status(message: &str) {
+    if let Ok(handles) = handles() {
+        set_text(handles.status, message);
     }
 }
 
-fn field(label: &'static str, input: Input) -> impl IntoElement {
-    v_flex()
-        .gap_1()
-        .child(div().text_sm().text_color(rgb(MUTED)).child(label))
-        .child(input)
+fn get_text(hwnd: HWND) -> String {
+    // SAFETY: hwnd is a live EDIT control owned by this process. The allocated buffer is sized from
+    // GetWindowTextLengthW and remains writable for GetWindowTextW.
+    unsafe {
+        let len = GetWindowTextLengthW(hwnd);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buffer = vec![0u16; len as usize + 1];
+        let copied = GetWindowTextW(hwnd, &mut buffer);
+        String::from_utf16_lossy(&buffer[..copied as usize])
+    }
+}
+
+fn set_text(hwnd: HWND, value: &str) {
+    let text = HSTRING::from(value);
+    // SAFETY: hwnd is a live child control and HSTRING owns a valid UTF-16 buffer for the call.
+    unsafe {
+        let _ = SetWindowTextW(hwnd, &text);
+    }
+}
+
+fn confirm(parent: HWND, message: &str) -> bool {
+    let message = HSTRING::from(message);
+    // SAFETY: parent is the live application window and HSTRING buffers remain valid for the
+    // synchronous MessageBoxW call.
+    unsafe {
+        MessageBoxW(
+            Some(parent),
+            &message,
+            w!("mstsc-mgr external"),
+            MB_YESNO | MB_ICONQUESTION,
+        ) == IDYES
+    }
+}
+
+fn show_error(parent: Option<HWND>, message: &str) {
+    let message = HSTRING::from(message);
+    // SAFETY: optional parent is either null or a live application HWND. HSTRING remains valid for
+    // the synchronous MessageBoxW call.
+    unsafe {
+        let _ = MessageBoxW(
+            parent,
+            &message,
+            w!("mstsc-mgr external"),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }

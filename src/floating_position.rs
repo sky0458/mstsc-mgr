@@ -72,17 +72,16 @@ fn apply_stable_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     }
 
     // SAFETY: GetSystemMetrics reads process-independent desktop geometry.
-    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) =
-        unsafe {
-            (
-                GetSystemMetrics(SM_XVIRTUALSCREEN),
-                GetSystemMetrics(SM_YVIRTUALSCREEN),
-                GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                GetSystemMetrics(SM_CYVIRTUALSCREEN),
-                GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            )
-        };
+    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN),
+        )
+    };
 
     let max_x = virtual_left
         .saturating_add(virtual_width)
@@ -207,7 +206,11 @@ fn persist_position(state: &Arc<RwLock<AppState>>, x: i32, y: i32) -> Result<()>
         *runtime = next.clone();
     }
     config::save_settings(&app_state.paths, &next)?;
-    tracing::info!(x, y, "floating ball position persisted from native drag movement");
+    tracing::info!(
+        x,
+        y,
+        "floating ball position persisted from native drag movement"
+    );
     Ok(())
 }
 

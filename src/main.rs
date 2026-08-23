@@ -100,13 +100,12 @@ fn main() -> anyhow::Result<()> {
             tracing::error!(%error, "failed to open floating ball");
         }
 
-        if let Err(error) = cx.open_window(
-            floating::floating_list_window_options(cx),
-            |window, cx| {
+        if let Err(error) =
+            cx.open_window(floating::floating_list_window_options(cx), |window, cx| {
                 window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
                 cx.new(|cx| FloatingList::new(floating_list_state, cx))
-            },
-        ) {
+            })
+        {
             tracing::error!(%error, "failed to open floating MSTSC list");
         }
 

@@ -74,6 +74,7 @@ Entries are ordered newest to oldest.
 - Rolled the floating-ball startup lifecycle back to the v0.2.10 behavior: the 64×64 popup is created with its normal visibility and native circular configuration instead of being created hidden, eliminating the oversized temporary HWND/elliptical region regression introduced in v0.2.11.
 - Reimplemented startup coordinate recovery as a delayed position-only stabilization pass. It validates that the native ball bounds are already small/settled, then uses `SetWindowPos(..., SWP_NOSIZE)` so saved/default placement can never resize or reshape the floating ball.
 - Reimplemented coordinate persistence with a native position watcher that detects actual ball movement while the left button is held and saves the final X/Y on release, while leaving the v0.2.10 drag, click, hover, menu, opacity and circular-region code unchanged.
+- Evaluated Windows Server 2016 / Windows 10 1607 compatibility and intentionally rolled the experimental legacy build back after GPUI 0.2.2 exposed additional DirectWrite requirements beyond the earlier ICU/DXGI issues. v0.2.12 therefore keeps the standard Windows release path only and does not claim Server 2016 compatibility.
 
 ### version 0.2.11 2026-08-23 11:32:00
 

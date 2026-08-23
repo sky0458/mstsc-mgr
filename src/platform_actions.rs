@@ -4,9 +4,9 @@ use windows::Win32::{
     Foundation::HWND,
     UI::WindowsAndMessaging::{
         BringWindowToTop, EnableWindow, FindWindowW, GWL_STYLE, GetShellWindow, GetWindowLongW,
-        GetWindowRect, HWND_TOP, ReleaseCapture, SW_MINIMIZE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongW, SetWindowPos,
-        ShowWindow, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        ReleaseCapture, SW_MINIMIZE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     },
 };
 use windows::core::HSTRING;
@@ -70,17 +70,6 @@ pub fn host_desktop() -> Result<usize> {
         if !shell.0.is_null() {
             let _ = BringWindowToTop(shell);
             let _ = SetForegroundWindow(shell);
-            let mut rect = windows::Win32::Foundation::RECT::default();
-            let _ = GetWindowRect(shell, &mut rect);
-            let _ = SetWindowPos(
-                shell,
-                Some(HWND_TOP),
-                rect.left,
-                rect.top,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOACTIVATE,
-            );
         }
     }
 

@@ -19,7 +19,7 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Right-clicking the floating ball opens an independent compact custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu is sized like a context menu, stays tight against the ball, and dismisses when either mouse button is pressed elsewhere.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
-- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window. Its X/Y position is persisted from the native drag lifecycle and restored only after GPUI HWND initialization has settled; first run places it near the primary display's right edge around the upper-middle area.
+- The floating ball uses the v0.2.10 visible 64×64 creation/configuration lifecycle so the native ellipse is always derived from settled ball bounds. Startup position is re-applied later using `SWP_NOSIZE` only, and native drag movement is watched so the final X/Y is persisted without depending on GPUI mouse-up delivery.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Current MSTSC windows are placed into a stable PID/HWND order before the shared snapshot is published. Hover-list numbers and `Alt+Shift+1..9` therefore use the same ordering and no longer change merely because focus or Windows Z-order changes.
 - Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
@@ -62,12 +62,19 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.11`.
+- Push a matching SemVer tag such as `v0.2.12`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.12 2026-08-23 11:59:00
+
+- Rolled the floating-ball startup lifecycle back to the v0.2.10 behavior: the 64×64 popup is created with its normal visibility and native circular configuration instead of being created hidden, eliminating the oversized temporary HWND/elliptical region regression introduced in v0.2.11.
+- Reimplemented startup coordinate recovery as a delayed position-only stabilization pass. It validates that the native ball bounds are already small/settled, then uses `SetWindowPos(..., SWP_NOSIZE)` so saved/default placement can never resize or reshape the floating ball.
+- Reimplemented coordinate persistence with a native position watcher that detects actual ball movement while the left button is held and saves the final X/Y on release, while leaving the v0.2.10 drag, click, hover, menu, opacity and circular-region code unchanged.
+- Evaluated Windows Server 2016 / Windows 10 1607 compatibility and intentionally rolled the experimental legacy build back after GPUI 0.2.2 exposed additional DirectWrite requirements beyond the earlier ICU/DXGI issues. v0.2.12 therefore keeps the standard Windows release path only and does not claim Server 2016 compatibility.
 
 ### version 0.2.11 2026-08-23 11:32:00
 

@@ -22,7 +22,6 @@ use windows::{
     core::{HSTRING, PCWSTR, w},
 };
 
-const APP_TITLE: &str = "mstsc-mgr external";
 const WINDOW_CLASS: PCWSTR = w!("MstscMgrExternalWindow");
 
 const ID_LIST: u16 = 100;
@@ -205,7 +204,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("已保存连接"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 20, y: 18, width: 300, height: 22 },
+        Rect {
+            x: 20,
+            y: 18,
+            width: 300,
+            height: 22,
+        },
         0,
     )?;
     let list = create_control(
@@ -214,7 +218,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("LISTBOX"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY_STYLE,
-        Rect { x: 20, y: 44, width: 310, height: 300 },
+        Rect {
+            x: 20,
+            y: 44,
+            width: 310,
+            height: 300,
+        },
         ID_LIST,
     )?;
 
@@ -224,7 +233,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("名称"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 360, y: 35, width: 90, height: 22 },
+        Rect {
+            x: 360,
+            y: 35,
+            width: 90,
+            height: 22,
+        },
         0,
     )?;
     let name = create_control(
@@ -233,7 +247,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("EDIT"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
-        Rect { x: 450, y: 30, width: 270, height: 26 },
+        Rect {
+            x: 450,
+            y: 30,
+            width: 270,
+            height: 26,
+        },
         ID_NAME,
     )?;
 
@@ -243,7 +262,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("IP / 主机名"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 360, y: 82, width: 90, height: 22 },
+        Rect {
+            x: 360,
+            y: 82,
+            width: 90,
+            height: 22,
+        },
         0,
     )?;
     let host = create_control(
@@ -252,7 +276,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("EDIT"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
-        Rect { x: 450, y: 77, width: 270, height: 26 },
+        Rect {
+            x: 450,
+            y: 77,
+            width: 270,
+            height: 26,
+        },
         ID_HOST,
     )?;
 
@@ -262,7 +291,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("用户名"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 360, y: 129, width: 90, height: 22 },
+        Rect {
+            x: 360,
+            y: 129,
+            width: 90,
+            height: 22,
+        },
         0,
     )?;
     let username = create_control(
@@ -271,7 +305,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("EDIT"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE,
-        Rect { x: 450, y: 124, width: 270, height: 26 },
+        Rect {
+            x: 450,
+            y: 124,
+            width: 270,
+            height: 26,
+        },
         ID_USERNAME,
     )?;
 
@@ -281,7 +320,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("密码"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 360, y: 176, width: 90, height: 22 },
+        Rect {
+            x: 360,
+            y: 176,
+            width: 90,
+            height: 22,
+        },
         0,
     )?;
     let password = create_control(
@@ -289,13 +333,13 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         instance,
         w!("EDIT"),
         w!(""),
-        WS_CHILD
-            | WS_VISIBLE
-            | WS_BORDER
-            | WS_TABSTOP
-            | ES_AUTOHSCROLL_STYLE
-            | ES_PASSWORD_STYLE,
-        Rect { x: 450, y: 171, width: 270, height: 26 },
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL_STYLE | ES_PASSWORD_STYLE,
+        Rect {
+            x: 450,
+            y: 171,
+            width: 270,
+            height: 26,
+        },
         ID_PASSWORD,
     )?;
 
@@ -305,7 +349,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("BUTTON"),
         w!("新建"),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        Rect { x: 360, y: 232, width: 80, height: 32 },
+        Rect {
+            x: 360,
+            y: 232,
+            width: 80,
+            height: 32,
+        },
         ID_NEW,
     )?;
     create_control(
@@ -314,7 +363,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("BUTTON"),
         w!("保存"),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        Rect { x: 450, y: 232, width: 80, height: 32 },
+        Rect {
+            x: 450,
+            y: 232,
+            width: 80,
+            height: 32,
+        },
         ID_SAVE,
     )?;
     create_control(
@@ -323,7 +377,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("BUTTON"),
         w!("删除"),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        Rect { x: 540, y: 232, width: 80, height: 32 },
+        Rect {
+            x: 540,
+            y: 232,
+            width: 80,
+            height: 32,
+        },
         ID_DELETE,
     )?;
     create_control(
@@ -332,7 +391,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("BUTTON"),
         w!("连接"),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        Rect { x: 630, y: 232, width: 90, height: 32 },
+        Rect {
+            x: 630,
+            y: 232,
+            width: 90,
+            height: 32,
+        },
         ID_CONNECT,
     )?;
 
@@ -342,7 +406,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!("密码说明：编辑已有连接时留空表示不修改。"),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 360, y: 285, width: 360, height: 22 },
+        Rect {
+            x: 360,
+            y: 285,
+            width: 360,
+            height: 22,
+        },
         0,
     )?;
     let status = create_control(
@@ -351,7 +420,12 @@ fn create_controls(parent: HWND, instance: HINSTANCE) -> Result<UiHandles> {
         w!("STATIC"),
         w!(""),
         WS_CHILD | WS_VISIBLE,
-        Rect { x: 20, y: 360, width: 700, height: 24 },
+        Rect {
+            x: 20,
+            y: 360,
+            width: 700,
+            height: 24,
+        },
         0,
     )?;
 
@@ -470,11 +544,7 @@ fn on_save() -> Result<()> {
         };
 
         let (index, old_host) = if let Some(index) = selected {
-            let existing = app
-                .store
-                .connections
-                .get(index)
-                .context("连接索引无效")?;
+            let existing = app.store.connections.get(index).context("连接索引无效")?;
             let old_host = Some(existing.host.clone());
             app.store.connections[index] = connection;
             (index, old_host)
@@ -516,7 +586,11 @@ fn on_delete() -> Result<()> {
             .get(index)
             .cloned()
             .context("连接索引无效")?;
-        Ok::<_, anyhow::Error>((app.handles.context("UI handles missing")?, index, connection))
+        Ok::<_, anyhow::Error>((
+            app.handles.context("UI handles missing")?,
+            index,
+            connection,
+        ))
     })?;
 
     if !confirm(

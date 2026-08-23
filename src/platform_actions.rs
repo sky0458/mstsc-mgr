@@ -7,8 +7,8 @@ use windows::Win32::{
         WindowsAndMessaging::{
             BringWindowToTop, FindWindowW, GWL_STYLE, GetShellWindow, GetWindowLongW, SW_MINIMIZE,
             SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-            SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION, WS_MAXIMIZEBOX,
-            WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+            SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION,
+            WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };

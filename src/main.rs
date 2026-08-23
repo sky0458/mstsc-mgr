@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     use gpui_component_assets::Assets;
     use mstsc_mgr::{
         floating::{self, FloatingBall, FloatingContextMenu, FloatingList},
-        logging, platform,
+        floating_position, logging, platform,
         ui::{self, AppState, ManagerView},
     };
     use std::sync::{Arc, RwLock};
@@ -91,7 +91,7 @@ fn main() -> anyhow::Result<()> {
         platform::start_tray_worker();
 
         if let Err(error) = cx.open_window(
-            floating::floating_ball_window_options_with_visibility(cx, floating_enabled),
+            floating::floating_ball_window_options_with_visibility(cx, false),
             |window, cx| {
                 window.set_window_title(platform::FLOATING_BALL_WINDOW_TITLE);
                 cx.new(|cx| FloatingBall::new(floating_ball_state, cx))
@@ -100,13 +100,12 @@ fn main() -> anyhow::Result<()> {
             tracing::error!(%error, "failed to open floating ball");
         }
 
-        if let Err(error) = cx.open_window(
-            floating::floating_list_window_options(cx),
-            |window, cx| {
+        if let Err(error) =
+            cx.open_window(floating::floating_list_window_options(cx), |window, cx| {
                 window.set_window_title(platform::FLOATING_LIST_WINDOW_TITLE);
                 cx.new(|cx| FloatingList::new(floating_list_state, cx))
-            },
-        ) {
+            })
+        {
             tracing::error!(%error, "failed to open floating MSTSC list");
         }
 
@@ -120,22 +119,7 @@ fn main() -> anyhow::Result<()> {
             tracing::error!(%error, "failed to open floating custom context menu");
         }
 
-        if floating_enabled {
-            if let Err(error) = platform::configure_floating_ball_window() {
-                tracing::warn!(%error, "floating ball native configuration will retry during render");
-            }
-            if let Err(error) = platform::configure_floating_list_window() {
-                tracing::warn!(%error, "floating list native configuration will retry during render");
-            }
-        }
-
-        if let Err(error) = floating::set_controller_visible(floating_enabled) {
-            tracing::warn!(%error, "failed to apply initial floating-controller visibility");
-        }
-        let initial_visible = floating::initial_list_visibility(&state);
-        if let Err(error) = platform::set_floating_list_visible(initial_visible) {
-            tracing::warn!(%error, "failed to apply initial floating-list visibility");
-        }
+        floating_position::start(Arc::clone(&state), floating_enabled);
 
         cx.activate(true);
     });

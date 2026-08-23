@@ -1,6 +1,6 @@
 [package]
 name = "mstsc-mgr"
-version = "0.2.10"
+version = "0.2.11"
 edition = "2024"
 rust-version = "1.90"
 description = "A native Windows MSTSC external-session manager built with Rust and GPUI"

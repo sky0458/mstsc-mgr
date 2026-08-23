@@ -20,7 +20,12 @@ fn main() {
                 Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
                 core::{HSTRING, w},
             };
-            let _ = MessageBoxW(None, &HSTRING::from(message), w!("mstsc-mgr external"), MB_OK | MB_ICONERROR);
+            let _ = MessageBoxW(
+                None,
+                &HSTRING::from(message),
+                w!("mstsc-mgr external"),
+                MB_OK | MB_ICONERROR,
+            );
         }
     }
 }

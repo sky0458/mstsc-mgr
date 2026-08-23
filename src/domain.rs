@@ -63,6 +63,10 @@ pub struct AppSettings {
     #[serde(default = "default_floating_opacity_percent")]
     pub floating_opacity_percent: u8,
     #[serde(default)]
+    pub floating_ball_x: Option<i32>,
+    #[serde(default)]
+    pub floating_ball_y: Option<i32>,
+    #[serde(default)]
     pub always_show_tabs: bool,
     #[serde(default = "default_true")]
     pub global_hotkeys: bool,
@@ -89,6 +93,8 @@ impl Default for AppSettings {
         Self {
             floating_controller: true,
             floating_opacity_percent: default_floating_opacity_percent(),
+            floating_ball_x: None,
+            floating_ball_y: None,
             always_show_tabs: false,
             global_hotkeys: true,
             close_to_tray: true,
@@ -186,5 +192,12 @@ mod tests {
         let settings = AppSettings::default();
         assert_eq!(settings.floating_opacity_percent, 50);
         assert!((settings.floating_opacity() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn floating_position_defaults_to_unspecified() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.floating_ball_x, None);
+        assert_eq!(settings.floating_ball_y, None);
     }
 }

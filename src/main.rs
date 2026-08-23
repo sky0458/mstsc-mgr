@@ -17,6 +17,13 @@ fn main() -> anyhow::Result<()> {
     };
     use std::sync::{Arc, RwLock};
 
+    #[cfg(feature = "legacy-windows")]
+    // SAFETY: this happens before GPUI creates its Windows platform. The legacy package disables
+    // DirectComposition so Server 2016 uses the regular HWND swap-chain path instead.
+    unsafe {
+        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
+    }
+
     let state = Arc::new(RwLock::new(AppState::load()?));
     let log_path = state
         .read()
@@ -26,6 +33,9 @@ fn main() -> anyhow::Result<()> {
         Some(path) => tracing::info!(path = %path.display(), "diagnostic file logging initialized"),
         None => tracing::warn!("diagnostic log file could not be initialized"),
     }
+
+    #[cfg(feature = "legacy-windows")]
+    tracing::info!("legacy Windows compatibility mode enabled");
 
     if let Ok(guard) = state.read() {
         floating::start_stable_window_watcher(Arc::clone(&guard.windows));

@@ -76,10 +76,7 @@ fn encode_dib(image: &RgbaImage) -> io::Result<Vec<u8>> {
 
     let mut dib = Vec::new();
     push_u32(&mut dib, 40);
-    push_i32(
-        &mut dib,
-        i32::try_from(width).map_err(io::Error::other)?,
-    );
+    push_i32(&mut dib, i32::try_from(width).map_err(io::Error::other)?);
     push_i32(
         &mut dib,
         i32::try_from(doubled_height).map_err(io::Error::other)?,

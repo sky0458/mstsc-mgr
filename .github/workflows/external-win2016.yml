@@ -3,6 +3,7 @@ name: External Win2016 Native
 on:
   push:
     branches: ["external/win2016-native"]
+  pull_request:
   workflow_dispatch:
 
 permissions:

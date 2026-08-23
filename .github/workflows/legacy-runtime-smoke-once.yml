@@ -1,0 +1,166 @@
+name: Legacy runtime smoke (one-time)
+
+on:
+  push:
+    branches:
+      - fix/v0.2.12-rollback-floating-position
+    paths:
+      - '.github/workflows/legacy-runtime-smoke-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-runtime-smoke:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Prepare patched GPUI for Server 2016
+        shell: pwsh
+        run: |
+          cargo vendor --versioned-dirs vendor | Out-Null
+          & .\compat\patch-gpui-legacy.ps1
+          Add-Content Cargo.toml "`n[patch.crates-io]`ngpui = { path = 'vendor/gpui-0.2.2' }`n"
+
+      - name: Build legacy release
+        shell: pwsh
+        run: |
+          $env:CARGO_TARGET_DIR = 'target-legacy'
+          cargo build --release --features legacy-windows
+
+      - name: Static legacy compatibility checks
+        shell: pwsh
+        run: |
+          $imports = dumpbin /imports target-legacy\release\mstsc-mgr.exe | Out-String
+          if ($imports -match '(?im)\bicuuc\.dll\b') {
+            throw 'legacy executable still imports icuuc.dll'
+          }
+
+          $devices = Get-Content -Raw vendor\gpui-0.2.2\src\platform\windows\directx_devices.rs
+          $renderer = Get-Content -Raw vendor\gpui-0.2.2\src\platform\windows\directx_renderer.rs
+          if ($devices -match 'IDXGIFactory6' -or $renderer -match 'IDXGIFactory6') {
+            throw 'legacy GPUI still requires IDXGIFactory6'
+          }
+          if ($devices -notmatch 'IDXGIFactory2' -or $renderer -notmatch 'IDXGIFactory2') {
+            throw 'legacy GPUI IDXGIFactory2 patch is missing'
+          }
+
+      - name: Launch legacy executable and verify GPUI windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'target-legacy\release\mstsc-mgr.exe').Path
+          $workDir = Split-Path $exe
+          $log = Join-Path $workDir 'mstsc-mgr.log'
+          Remove-Item $log -Force -ErrorAction SilentlyContinue
+
+          Add-Type @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+
+          public static class WindowProbe {
+              public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+              [DllImport("user32.dll")]
+              private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+              [DllImport("user32.dll")]
+              private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+              [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+              private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int maxCount);
+
+              public static string[] Titles(uint targetPid) {
+                  var titles = new List<string>();
+                  EnumWindows((hwnd, lParam) => {
+                      uint pid;
+                      GetWindowThreadProcessId(hwnd, out pid);
+                      if (pid == targetPid) {
+                          var text = new StringBuilder(512);
+                          GetWindowText(hwnd, text, text.Capacity);
+                          if (text.Length > 0) titles.Add(text.ToString());
+                      }
+                      return true;
+                  }, IntPtr.Zero);
+                  return titles.ToArray();
+              }
+          }
+          '@
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory $workDir -PassThru
+          Write-Host "Started mstsc-mgr PID=$($process.Id)"
+
+          $required = @('mstsc-mgr', 'mstsc-mgr-floating-ball', 'mstsc-mgr-floating-list')
+          $deadline = (Get-Date).AddSeconds(30)
+          $seen = @()
+
+          try {
+            while ((Get-Date) -lt $deadline) {
+              $process.Refresh()
+              if ($process.HasExited) {
+                if (Test-Path $log) { Get-Content $log }
+                throw "legacy executable exited during startup with code $($process.ExitCode)"
+              }
+
+              $seen = @([WindowProbe]::Titles([uint32]$process.Id))
+              Write-Host ("Top-level windows: " + ($seen -join ' | '))
+
+              if ($seen -contains 'Failed to launch') {
+                throw 'GPUI displayed Failed to launch during startup'
+              }
+
+              $missing = @($required | Where-Object { $seen -notcontains $_ })
+              if ($missing.Count -eq 0) {
+                Write-Host 'All required mstsc-mgr GPUI windows were created.'
+                break
+              }
+              Start-Sleep -Milliseconds 500
+            }
+
+            $missing = @($required | Where-Object { $seen -notcontains $_ })
+            if ($missing.Count -ne 0) {
+              if (Test-Path $log) { Get-Content $log }
+              throw "startup timeout; missing windows: $($missing -join ', ')"
+            }
+
+            Start-Sleep -Seconds 5
+            $process.Refresh()
+            if ($process.HasExited) {
+              throw "legacy executable exited after window creation with code $($process.ExitCode)"
+            }
+
+            if (Test-Path $log) {
+              Write-Host '--- mstsc-mgr.log ---'
+              Get-Content $log
+              $logText = Get-Content -Raw $log
+              if ($logText -match '(?i)Creating DirectX devices|Failed to launch') {
+                throw 'runtime log contains a DirectX startup failure marker'
+              }
+            } else {
+              Write-Warning 'mstsc-mgr.log was not created during smoke test'
+            }
+
+            Write-Host 'Legacy runtime smoke test PASSED.'
+          }
+          finally {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+      - name: Upload runtime log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-runtime-smoke-log
+          path: target-legacy/release/mstsc-mgr.log
+          if-no-files-found: ignore

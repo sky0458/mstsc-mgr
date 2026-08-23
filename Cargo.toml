@@ -1,11 +1,12 @@
 [package]
 name = "mstsc-mgr"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2024"
 rust-version = "1.90"
 description = "A native Windows MSTSC external-session manager built with Rust and GPUI"
 license = "MIT"
 repository = "https://github.com/sky0458/mstsc-mgr"
+build = "build.rs"
 
 [dependencies]
 anyhow = "1"
@@ -31,6 +32,9 @@ windows = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.31"
 
 [profile.release]
 lto = "thin"

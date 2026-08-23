@@ -16,9 +16,10 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - The RDP ball receives a native elliptical Windows region, so its actual HWND hit/paint region is circular rather than a transparent rectangle with a rounded child drawn inside it.
 - Floating-controller opacity is configurable from 10% to 100% with a Settings slider and defaults to 50%; the same value is applied to both the RDP ball and its hover session popup.
 - The floating controller remains enabled by default and can be hidden or shown from Settings at runtime without restarting the application.
-- Right-clicking the floating ball opens an independent compact custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu is sized like a context menu, stays tight against the ball, and dismisses when either mouse button is pressed elsewhere.
+- Right-clicking the floating ball opens an independent compact custom GPUI menu window with `Show main window`, `Host Desktop`, `Close floating controller`, and `Exit`. The menu is sized like a context menu, stays tight against the ball, and dismisses when either mouse button is pressed elsewhere.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
-- The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
+- The hover popup has no decorative title row; its first action is `Host Desktop`, followed by current MSTSC sessions. `Host Desktop` minimizes every currently visible system-wide `mstsc.exe` window, hides the mstsc-mgr main window to the tray and returns focus toward the Windows shell while keeping the floating controller available.
+- The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions plus the `Host Desktop` action, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
 - The floating ball uses the v0.2.10 visible 64×64 creation/configuration lifecycle so the native ellipse is always derived from settled ball bounds. Startup position is re-applied later using `SWP_NOSIZE` only, and native drag movement is watched so the final X/Y is persisted without depending on GPUI mouse-up delivery.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Current MSTSC windows are placed into a stable PID/HWND order before the shared snapshot is published. Hover-list numbers and `Alt+Shift+1..9` therefore use the same ordering and no longer change merely because focus or Windows Z-order changes.
@@ -27,7 +28,7 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
   - `Alt+Shift+1..9`: activate the Nth current visible MSTSC window.
   - `Ctrl+Alt+Shift+Left/Right`: cycle through current MSTSC windows with wrap-around.
 - Optional keepalive with a targeted `WM_MOUSEMOVE` or Shift key message sent only to enumerated MSTSC HWNDs. Because discovery is system-wide, keepalive currently also applies to externally launched MSTSC sessions. It does not move the physical mouse or steal foreground focus.
-- The main window uses the native Windows title bar and is movable/resizable. Closing it defaults to hiding it in the system tray; this behavior can be disabled in Settings. Left-clicking the tray icon restores the main window, and right-clicking opens a native menu with Open and Exit actions.
+- The main window uses the native Windows title bar and is movable/resizable. Its native frame/capture state is refreshed after creation and after floating-controller restoration so title-bar dragging remains available. Closing it defaults to hiding it in the system tray; this behavior can be disabled in Settings. Left-clicking the tray icon restores the main window, and right-clicking opens a native menu with Open and Exit actions.
 - GitHub Actions CI on Windows and tagged release packaging.
 
 ## Security model
@@ -62,12 +63,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.12`.
+- Push a matching SemVer tag such as `v0.2.13`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.13 2026-08-23 20:48:00
+
+- Refreshed the mstsc-mgr main HWND's standard native frame and released stale mouse capture after startup and after the floating controller restores the main window, addressing the case where the visible native title bar could no longer drag the window while preserving resize/minimize behavior.
+- Removed the hover popup's `MSTSC sessions` title and made `Host Desktop` the first action. It minimizes all currently visible system-wide `mstsc.exe` windows, hides mstsc-mgr to the tray and returns toward the host desktop while leaving the floating controller available.
+- Added the same `Host Desktop` action to the floating-ball right-click menu and expanded the compact menu/list height calculations only for the additional action; the 64×64 floating-ball geometry remains unchanged.
 
 ### version 0.2.12 2026-08-23 11:59:00
 

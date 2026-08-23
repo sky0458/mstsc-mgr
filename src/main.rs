@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     use gpui_component_assets::Assets;
     use mstsc_mgr::{
         floating::{self, FloatingBall, FloatingContextMenu, FloatingList},
-        floating_position, logging, platform,
+        floating_position, logging, platform, platform_actions,
         ui::{self, AppState, ManagerView},
     };
     use std::sync::{Arc, RwLock};
@@ -86,6 +86,10 @@ fn main() -> anyhow::Result<()> {
             tracing::error!(%error, "failed to open main window");
             cx.quit();
             return;
+        }
+
+        if let Err(error) = platform_actions::repair_main_window_frame() {
+            tracing::warn!(%error, "failed to refresh native main-window frame after creation");
         }
 
         platform::start_tray_worker();

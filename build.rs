@@ -4,10 +4,17 @@ use image::{RgbaImage, imageops::FilterType};
 use std::{env, io, path::Path};
 
 #[cfg(windows)]
+const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
+#[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=assets/mstsc-mgr.ico");
 
-    let source = image::open("assets/mstsc-mgr.ico")?.into_rgba8();
+    let source_ico = std::fs::read("assets/mstsc-mgr.ico")?;
+    let source_png = largest_embedded_png(&source_ico)?;
+    let source = image::load_from_memory_with_format(source_png, image::ImageFormat::Png)?
+        .into_rgba8();
+
     let out_dir = env::var_os("OUT_DIR")
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OUT_DIR is not set"))?;
     let resource_icon = std::path::PathBuf::from(out_dir).join("mstsc-mgr-resource.ico");
@@ -27,6 +34,97 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set("ProductName", "mstsc-mgr");
     resource.compile()?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn largest_embedded_png(ico: &[u8]) -> io::Result<&[u8]> {
+    if read_u16(ico, 0)? != 0 || read_u16(ico, 2)? != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source icon has an invalid ICO header",
+        ));
+    }
+
+    let count = usize::from(read_u16(ico, 4)?);
+    let mut best: Option<(u32, &[u8])> = None;
+    for index in 0..count {
+        let entry_offset = 6_usize
+            .checked_add(
+                index
+                    .checked_mul(16)
+                    .ok_or_else(|| io::Error::other("ICO directory offset overflow"))?,
+            )
+            .ok_or_else(|| io::Error::other("ICO directory offset overflow"))?;
+        let width_byte = *ico.get(entry_offset).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "truncated ICO directory")
+        })?;
+        let height_byte = *ico.get(entry_offset + 1).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "truncated ICO directory")
+        })?;
+        let width = if width_byte == 0 {
+            256
+        } else {
+            u32::from(width_byte)
+        };
+        let height = if height_byte == 0 {
+            256
+        } else {
+            u32::from(height_byte)
+        };
+        let length = usize::try_from(read_u32(ico, entry_offset + 8)?)
+            .map_err(io::Error::other)?;
+        let data_offset = usize::try_from(read_u32(ico, entry_offset + 12)?)
+            .map_err(io::Error::other)?;
+        let data_end = data_offset
+            .checked_add(length)
+            .ok_or_else(|| io::Error::other("ICO image offset overflow"))?;
+        let payload = ico.get(data_offset..data_end).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "truncated ICO image data")
+        })?;
+        if !payload.starts_with(PNG_SIGNATURE) {
+            continue;
+        }
+
+        let score = width.saturating_mul(height);
+        let should_replace = match best {
+            Some((best_score, _)) => score > best_score,
+            None => true,
+        };
+        if should_replace {
+            best = Some((score, payload));
+        }
+    }
+
+    best.map(|(_, payload)| payload).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source icon contains no embedded PNG image",
+        )
+    })
+}
+
+#[cfg(windows)]
+fn read_u16(data: &[u8], offset: usize) -> io::Result<u16> {
+    let end = offset
+        .checked_add(2)
+        .ok_or_else(|| io::Error::other("binary offset overflow"))?;
+    let bytes = data.get(offset..end).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data")
+    })?;
+    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+#[cfg(windows)]
+fn read_u32(data: &[u8], offset: usize) -> io::Result<u32> {
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| io::Error::other("binary offset overflow"))?;
+    let bytes = data.get(offset..end).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data")
+    })?;
+    Ok(u32::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+    ]))
 }
 
 #[cfg(windows)]

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - external/server2016
+  pull_request:
   workflow_dispatch:
 
 permissions:

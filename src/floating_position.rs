@@ -1,5 +1,5 @@
-use crate::{config, floating, platform, ui::AppState};
-use anyhow::{Context as _, Result};
+use crate::{config, platform, ui::AppState};
+use anyhow::{Context as _, Result, bail};
 use std::{
     sync::{Arc, RwLock},
     thread,
@@ -20,54 +20,42 @@ use windows::{
     core::HSTRING,
 };
 
-const STARTUP_DELAY: Duration = Duration::from_millis(120);
-const STARTUP_RETRY_INTERVAL: Duration = Duration::from_millis(50);
-const STARTUP_RETRIES: usize = 20;
+const STARTUP_SETTLE_DELAY: Duration = Duration::from_millis(250);
+const STARTUP_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const STARTUP_RETRIES: usize = 10;
 const POSITION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const FLOATING_DEFAULT_EDGE_GAP: i32 = 24;
 const FLOATING_DEFAULT_Y_PERCENT: i32 = 30;
+const MAX_EXPECTED_NATIVE_BALL_SIZE: i32 = 256;
 
-pub fn start(state: Arc<RwLock<AppState>>, initially_visible: bool) {
+/// Starts position stabilization and persistence on top of the normal v0.2.10
+/// visible 64x64 floating-ball lifecycle. This module must never resize, hide,
+/// reshape, or reconfigure the floating HWND.
+pub fn start(state: Arc<RwLock<AppState>>) {
     thread::spawn(move || {
-        thread::sleep(STARTUP_DELAY);
+        thread::sleep(STARTUP_SETTLE_DELAY);
 
-        let mut positioned = false;
         for attempt in 1..=STARTUP_RETRIES {
-            match apply_startup_position(&state) {
+            match apply_stable_startup_position(&state) {
                 Ok(()) => {
-                    positioned = true;
-                    tracing::info!(attempt, "floating ball startup position finalized");
+                    tracing::info!(attempt, "floating ball post-init position stabilized");
                     break;
                 }
+                Err(error) if attempt < STARTUP_RETRIES => {
+                    tracing::debug!(attempt, %error, "floating ball post-init position retry");
+                    thread::sleep(STARTUP_RETRY_INTERVAL);
+                }
                 Err(error) => {
-                    if attempt == STARTUP_RETRIES {
-                        tracing::warn!(%error, "floating ball startup position could not be finalized");
-                    } else {
-                        tracing::debug!(attempt, %error, "floating ball startup position retry");
-                        thread::sleep(STARTUP_RETRY_INTERVAL);
-                    }
+                    tracing::warn!(%error, "floating ball post-init position could not be stabilized");
                 }
             }
-        }
-
-        if positioned {
-            if let Err(error) = floating::set_controller_visible(initially_visible) {
-                tracing::warn!(%error, "failed to apply floating-controller visibility after positioning");
-            }
-            let list_visible = initially_visible && floating::initial_list_visibility(&state);
-            if let Err(error) = platform::set_floating_list_visible(list_visible) {
-                tracing::warn!(%error, "failed to apply floating-list visibility after positioning");
-            }
-        } else if initially_visible && let Err(error) = floating::set_controller_visible(true) {
-            tracing::warn!(%error, "failed to show floating controller after position fallback");
         }
 
         watch_and_persist_drag_position(state);
     });
 }
 
-fn apply_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
-    platform::configure_floating_ball_window()?;
+fn apply_stable_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     let ball = find_floating_ball()?;
     let mut rect = RECT::default();
     // SAFETY: ball is the application's live floating HWND and rect is writable output storage.
@@ -77,17 +65,24 @@ fn apply_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
 
     let width = (rect.right - rect.left).max(1);
     let height = (rect.bottom - rect.top).max(1);
+    if width > MAX_EXPECTED_NATIVE_BALL_SIZE || height > MAX_EXPECTED_NATIVE_BALL_SIZE {
+        bail!(
+            "floating ball native bounds are not settled yet: {width}x{height}; refusing to use them for position recovery"
+        );
+    }
+
     // SAFETY: GetSystemMetrics reads process-independent desktop geometry.
-    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) = unsafe {
-        (
-            GetSystemMetrics(SM_XVIRTUALSCREEN),
-            GetSystemMetrics(SM_YVIRTUALSCREEN),
-            GetSystemMetrics(SM_CXVIRTUALSCREEN),
-            GetSystemMetrics(SM_CYVIRTUALSCREEN),
-            GetSystemMetrics(SM_CXSCREEN),
-            GetSystemMetrics(SM_CYSCREEN),
-        )
-    };
+    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) =
+        unsafe {
+            (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXSCREEN),
+                GetSystemMetrics(SM_CYSCREEN),
+            )
+        };
 
     let max_x = virtual_left
         .saturating_add(virtual_width)
@@ -127,7 +122,8 @@ fn apply_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
         .clamp(virtual_top, max_y);
     let (x, y) = saved_position.unwrap_or((default_x, default_y));
 
-    // SAFETY: only the app-owned floating HWND position/Z-order is changed; size is preserved.
+    // SAFETY: only position/Z-order change. SWP_NOSIZE guarantees the v0.2.10
+    // native 64x64/DPI-adjusted bounds and existing circular region are untouched.
     unsafe {
         SetWindowPos(
             ball,
@@ -143,8 +139,10 @@ fn apply_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     tracing::info!(
         x,
         y,
+        width,
+        height,
         restored = saved_position.is_some(),
-        "floating ball startup position applied after GPUI initialization"
+        "floating ball position stabilized without changing native size"
     );
     Ok(())
 }
@@ -209,7 +207,7 @@ fn persist_position(state: &Arc<RwLock<AppState>>, x: i32, y: i32) -> Result<()>
         *runtime = next.clone();
     }
     config::save_settings(&app_state.paths, &next)?;
-    tracing::info!(x, y, "floating ball position persisted after native drag");
+    tracing::info!(x, y, "floating ball position persisted from native drag movement");
     Ok(())
 }
 

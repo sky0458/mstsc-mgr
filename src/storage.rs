@@ -19,8 +19,7 @@ pub fn load() -> Result<ConnectionStore> {
         return Ok(ConnectionStore::default());
     }
 
-    let bytes = fs::read(&path)
-        .with_context(|| format!("读取配置失败: {}", path.display()))?;
+    let bytes = fs::read(&path).with_context(|| format!("读取配置失败: {}", path.display()))?;
     if bytes.is_empty() {
         return Ok(ConnectionStore::default());
     }
@@ -40,7 +39,6 @@ pub fn save(store: &ConnectionStore) -> Result<()> {
         .with_context(|| format!("创建配置目录失败: {}", parent.display()))?;
 
     let bytes = serde_json::to_vec_pretty(store).context("序列化配置失败")?;
-    fs::write(&path, bytes)
-        .with_context(|| format!("写入配置失败: {}", path.display()))?;
+    fs::write(&path, bytes).with_context(|| format!("写入配置失败: {}", path.display()))?;
     Ok(())
 }

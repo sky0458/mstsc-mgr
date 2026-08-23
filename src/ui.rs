@@ -11,18 +11,17 @@ use windows::{
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
-            BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
-            BST_CHECKED, COLOR_WINDOW, CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW,
-            DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, EnableWindow,
-            GWLP_USERDATA, GetMessageW, GetSysColorBrush, GetWindowLongPtrW, GetWindowTextLengthW,
-            GetWindowTextW, HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR, LB_GETCURSEL,
-            LB_RESETCONTENT, LBN_DBLCLK, LoadCursorW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
-            MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOW, SendMessageW,
-            SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage,
-            WINDOW_EX_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE,
-            WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
-            WS_MINIMIZEBOX, WS_OVERLAPPED, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP,
-            WS_VISIBLE, WS_VSCROLL,
+            BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BST_CHECKED,
+            COLOR_WINDOW, CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
+            DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, EnableWindow, GWLP_USERDATA,
+            GetMessageW, GetSysColorBrush, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW,
+            HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK,
+            LoadCursorW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW,
+            PostQuitMessage, RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow,
+            SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
+            WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WNDCLASSW, WS_BORDER,
+            WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX,
+            WS_OVERLAPPED, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
         },
     },
     core::{HSTRING, PCWSTR, w},
@@ -75,7 +74,10 @@ struct EditorResult {
 
 pub fn run() -> Result<()> {
     let store = storage::load().unwrap_or_else(|error| {
-        show_error(None, &format!("Failed to load saved connections:\n{error:#}"));
+        show_error(
+            None,
+            &format!("Failed to load saved connections:\n{error:#}"),
+        );
         ConnectionStore::default()
     });
     APP_STATE.with(|slot| {
@@ -327,7 +329,10 @@ fn add_connection(parent: HWND) {
             if let Some(state) = state_ref.as_mut() {
                 state.store.connections.push(result.profile);
                 if let Err(error) = storage::save(&state.store) {
-                    show_error(Some(parent), &format!("Failed to save connection:\n{error:#}"));
+                    show_error(
+                        Some(parent),
+                        &format!("Failed to save connection:\n{error:#}"),
+                    );
                 }
             }
         });
@@ -356,7 +361,10 @@ fn edit_connection(parent: HWND) {
             {
                 *target = result.profile;
                 if let Err(error) = storage::save(&state.store) {
-                    show_error(Some(parent), &format!("Failed to save connection:\n{error:#}"));
+                    show_error(
+                        Some(parent),
+                        &format!("Failed to save connection:\n{error:#}"),
+                    );
                 }
             }
         });
@@ -371,10 +379,15 @@ fn delete_connection(parent: HWND) {
     };
     APP_STATE.with(|slot| {
         let mut state_ref = slot.borrow_mut();
-        if let Some(state) = state_ref.as_mut() && index < state.store.connections.len() {
+        if let Some(state) = state_ref.as_mut()
+            && index < state.store.connections.len()
+        {
             state.store.connections.remove(index);
             if let Err(error) = storage::save(&state.store) {
-                show_error(Some(parent), &format!("Failed to save connection:\n{error:#}"));
+                show_error(
+                    Some(parent),
+                    &format!("Failed to save connection:\n{error:#}"),
+                );
             }
         }
     });
@@ -406,11 +419,20 @@ fn open_data_folder(parent: HWND) {
             let Some(folder) = path.parent() else {
                 return;
             };
-            if let Err(error) = std::process::Command::new("explorer.exe").arg(folder).spawn() {
-                show_error(Some(parent), &format!("Failed to open data folder:\n{error}"));
+            if let Err(error) = std::process::Command::new("explorer.exe")
+                .arg(folder)
+                .spawn()
+            {
+                show_error(
+                    Some(parent),
+                    &format!("Failed to open data folder:\n{error}"),
+                );
             }
         }
-        Err(error) => show_error(Some(parent), &format!("Failed to resolve data folder:\n{error:#}")),
+        Err(error) => show_error(
+            Some(parent),
+            &format!("Failed to resolve data folder:\n{error:#}"),
+        ),
     }
 }
 
@@ -481,7 +503,10 @@ fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Op
             match crypto::protect_text(&password) {
                 Ok(protected) => result_ref.profile.protected_password = protected,
                 Err(error) => {
-                    show_error(Some(parent), &format!("Failed to protect password:\n{error:#}"));
+                    show_error(
+                        Some(parent),
+                        &format!("Failed to protect password:\n{error:#}"),
+                    );
                     return None;
                 }
             }
@@ -554,7 +579,13 @@ unsafe fn create_editor_controls(parent: HWND) {
     create_label(parent, "Password", 18, 182, 110);
     data.password = create_edit(parent, "", 136, 178, 270, ID_PASSWORD, true);
     if initial.is_some() {
-        create_label(parent, "Leave password blank to keep existing", 136, 209, 270);
+        create_label(
+            parent,
+            "Leave password blank to keep existing",
+            136,
+            209,
+            270,
+        );
     }
     data.fullscreen = create_control(
         WINDOW_EX_STYLE::default(),

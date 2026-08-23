@@ -242,8 +242,7 @@ fn start_context_menu_dismiss_watcher() {
             let left_down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } < 0;
             // SAFETY: GetAsyncKeyState only reads global mouse-button state.
             let right_down = unsafe { GetAsyncKeyState(VK_RBUTTON.0 as i32) } < 0;
-            let external_press =
-                (left_down && !left_was_down) || (right_down && !right_was_down);
+            let external_press = (left_down && !left_was_down) || (right_down && !right_was_down);
             left_was_down = left_down;
             right_was_down = right_down;
 
@@ -343,14 +342,7 @@ fn restore_floating_ball_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     let height = (rect.bottom - rect.top).max(1);
 
     // SAFETY: GetSystemMetrics reads screen geometry only.
-    let (
-        virtual_left,
-        virtual_top,
-        virtual_width,
-        virtual_height,
-        primary_width,
-        primary_height,
-    ) = unsafe {
+    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) = unsafe {
         (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
             GetSystemMetrics(SM_YVIRTUALSCREEN),
@@ -372,7 +364,12 @@ fn restore_floating_ball_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     let saved = state
         .read()
         .ok()
-        .map(|state| (state.settings.floating_ball_x, state.settings.floating_ball_y))
+        .map(|state| {
+            (
+                state.settings.floating_ball_x,
+                state.settings.floating_ball_y,
+            )
+        })
         .unwrap_or((None, None));
     let saved_position = match saved {
         (Some(x), Some(y)) if x >= virtual_left && x <= max_x && y >= virtual_top && y <= max_y => {
@@ -385,10 +382,7 @@ fn restore_floating_ball_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
         .saturating_sub(width)
         .saturating_sub(FLOATING_DEFAULT_EDGE_GAP)
         .clamp(virtual_left, max_x);
-    let default_y = primary_height
-        .saturating_sub(height)
-        .saturating_div(2)
-        .clamp(virtual_top, max_y);
+    let default_y = (primary_height.saturating_sub(height) / 2).clamp(virtual_top, max_y);
     let (x, y) = saved_position.unwrap_or((default_x, default_y));
 
     // SAFETY: only the app-owned ball position/Z-order changes; its size and region stay intact.
@@ -534,7 +528,6 @@ impl Render for FloatingBall {
             }
         }
 
-        let press_state = Arc::clone(&self.state);
         let release_state = Arc::clone(&self.state);
         div()
             .id("floating-ball-v4")
@@ -548,9 +541,8 @@ impl Render for FloatingBall {
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+            .on_mouse_down(MouseButton::Left, |_, _, _| {
                 let _ = set_context_menu_visible(false);
-                let _ = &press_state;
                 if let Err(error) = platform::begin_floating_drag() {
                     tracing::error!(%error, "failed to begin floating-ball drag");
                 }
@@ -783,7 +775,7 @@ pub fn floating_ball_window_options(cx: &App) -> WindowOptions {
     let diameter = px(FLOATING_BALL_SIZE);
     let origin = point(
         display_bounds.origin.x + display_bounds.size.width - diameter - px(24.),
-        display_bounds.origin.y + (display_bounds.size.height - diameter) / 2.0,
+        display_bounds.origin.y + px(100.),
     );
 
     WindowOptions {

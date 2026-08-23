@@ -19,7 +19,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: ilammy/msvc-dev-cmd@v1
       - uses: Swatinem/rust-cache@v2
       - name: Resolve version
         id: version
@@ -40,51 +39,17 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
-      - name: Build standard Windows release
+      - name: Build release
         run: cargo build --release
-      - name: Prepare patched GPUI for Server 2016
+      - name: Package
         shell: pwsh
         run: |
-          cargo vendor --versioned-dirs vendor | Out-Null
-          & .\compat\patch-gpui-legacy.ps1
-          Add-Content Cargo.toml "`n[patch.crates-io]`ngpui = { path = 'vendor/gpui-0.2.2' }`n"
-      - name: Build Server 2016 / Windows 10 1607 release
-        shell: pwsh
-        run: |
-          $env:CARGO_TARGET_DIR = 'target-legacy'
-          cargo build --release --features legacy-windows
-      - name: Verify legacy compatibility contract
-        shell: pwsh
-        run: |
-          $patchedDevices = Get-Content -Raw vendor\gpui-0.2.2\src\platform\windows\directx_devices.rs
-          $patchedRenderer = Get-Content -Raw vendor\gpui-0.2.2\src\platform\windows\directx_renderer.rs
-          $patchedDestination = Get-Content -Raw vendor\gpui-0.2.2\src\platform\windows\destination_list.rs
-          if ($patchedDevices -match 'IDXGIFactory6' -or $patchedRenderer -match 'IDXGIFactory6') {
-            throw 'legacy GPUI still requires IDXGIFactory6'
-          }
-          if ($patchedDevices -notmatch 'IDXGIFactory2' -or $patchedRenderer -notmatch 'IDXGIFactory2') {
-            throw 'legacy GPUI IDXGIFactory2 patch is missing'
-          }
-          if ($patchedDestination -match 'u_strlen') {
-            throw 'legacy GPUI still contains the Windows ICU u_strlen dependency'
-          }
-          $legacyImports = dumpbin /imports target-legacy\release\mstsc-mgr.exe | Out-String
-          if ($legacyImports -match '(?im)\bicuuc\.dll\b') {
-            throw 'legacy executable still imports icuuc.dll'
-          }
-      - name: Package Windows variants
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist\standard,dist\legacy | Out-Null
-          Copy-Item target\release\mstsc-mgr.exe dist\standard\mstsc-mgr.exe
-          Copy-Item target-legacy\release\mstsc-mgr.exe dist\legacy\mstsc-mgr.exe
-          foreach ($dir in @('dist\standard', 'dist\legacy')) {
-            Copy-Item assets\mstsc-mgr.ico "$dir\mstsc-mgr.ico"
-            Copy-Item README.md "$dir\README.md"
-            Copy-Item LICENSE "$dir\LICENSE"
-          }
-          Compress-Archive -Path dist\standard\* -DestinationPath mstsc-mgr-windows-x64.zip
-          Compress-Archive -Path dist\legacy\* -DestinationPath mstsc-mgr-windows-legacy-x64.zip
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/mstsc-mgr.exe dist/mstsc-mgr.exe
+          Copy-Item assets/mstsc-mgr.ico dist/mstsc-mgr.ico
+          Copy-Item README.md dist/README.md
+          Copy-Item LICENSE dist/LICENSE
+          Compress-Archive -Path dist/mstsc-mgr.exe,dist/mstsc-mgr.ico,dist/README.md,dist/LICENSE -DestinationPath mstsc-mgr-windows-x64.zip
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -93,6 +58,4 @@ jobs:
           name: mstsc-mgr ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           make_latest: true
-          files: |
-            mstsc-mgr-windows-x64.zip
-            mstsc-mgr-windows-legacy-x64.zip
+          files: mstsc-mgr-windows-x64.zip

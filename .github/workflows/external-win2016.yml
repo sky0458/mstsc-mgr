@@ -1,0 +1,61 @@
+name: External Win2016 Native
+
+on:
+  push:
+    branches: ["external/win2016-native"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.90.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+      - name: Verify Server 2016 dependency surface
+        shell: pwsh
+        run: |
+          $exe = "target/release/mstsc-mgr-external.exe"
+          $dumpbin = (Get-Command dumpbin.exe -ErrorAction SilentlyContinue)
+          if (-not $dumpbin) {
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $dumpbinPath = Get-ChildItem "$install\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          } else {
+            $dumpbinPath = $dumpbin.Source
+          }
+          if (-not $dumpbinPath) { throw "dumpbin.exe not found" }
+          $imports = & $dumpbinPath /DEPENDENTS $exe | Out-String
+          $imports | Write-Host
+          foreach ($blocked in @("d3d11.dll", "dxgi.dll", "dcomp.dll", "icuuc.dll", "WebView2Loader.dll")) {
+            if ($imports -match [regex]::Escape($blocked)) {
+              throw "Server 2016 build unexpectedly imports $blocked"
+            }
+          }
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/mstsc-mgr-external-win2016-x64 | Out-Null
+          Copy-Item target/release/mstsc-mgr-external.exe dist/mstsc-mgr-external-win2016-x64/
+          Copy-Item README.md, LICENSE dist/mstsc-mgr-external-win2016-x64/
+          Copy-Item assets/mstsc-mgr.ico dist/mstsc-mgr-external-win2016-x64/
+          Compress-Archive -Path dist/mstsc-mgr-external-win2016-x64/* -DestinationPath dist/mstsc-mgr-external-win2016-x64.zip -Force
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mstsc-mgr-external-win2016-x64
+          path: dist/mstsc-mgr-external-win2016-x64.zip

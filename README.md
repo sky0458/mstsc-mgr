@@ -49,6 +49,7 @@ Release 构建静态链接 MSVC CRT，以降低 Windows Server 2016 上缺少 VC
 - 使用 DPAPI 加密本地密码，使用 `CredWriteW` 写入 MSTSC 的 `TERMSRV/<host>` 凭据。
 - 明确移除 GPUI、DirectX、WebView、浮球、托盘、热键、会话扫描、KeepAlive、导入导出等主线功能。
 - CI 针对 Windows x64 构建，并检查最终 EXE 不依赖 DirectX、ICU 或 WebView 运行库。
+- 增加隔离分支的 pull-request CI 验证路径；该 PR 仅用于构建验证，不合并回主线。
 
 ## License
 

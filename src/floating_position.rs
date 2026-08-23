@@ -58,9 +58,7 @@ pub fn start(state: Arc<RwLock<AppState>>, initially_visible: bool) {
             if let Err(error) = platform::set_floating_list_visible(list_visible) {
                 tracing::warn!(%error, "failed to apply floating-list visibility after positioning");
             }
-        } else if initially_visible
-            && let Err(error) = floating::set_controller_visible(true)
-        {
+        } else if initially_visible && let Err(error) = floating::set_controller_visible(true) {
             tracing::warn!(%error, "failed to show floating controller after position fallback");
         }
 

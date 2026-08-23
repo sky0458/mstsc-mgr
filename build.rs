@@ -12,8 +12,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let source_ico = std::fs::read("assets/mstsc-mgr.ico")?;
     let source_png = largest_embedded_png(&source_ico)?;
-    let source = image::load_from_memory_with_format(source_png, image::ImageFormat::Png)?
-        .into_rgba8();
+    let source =
+        image::load_from_memory_with_format(source_png, image::ImageFormat::Png)?.into_rgba8();
 
     let out_dir = env::var_os("OUT_DIR")
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OUT_DIR is not set"))?;
@@ -71,10 +71,9 @@ fn largest_embedded_png(ico: &[u8]) -> io::Result<&[u8]> {
         } else {
             u32::from(height_byte)
         };
-        let length = usize::try_from(read_u32(ico, entry_offset + 8)?)
-            .map_err(io::Error::other)?;
-        let data_offset = usize::try_from(read_u32(ico, entry_offset + 12)?)
-            .map_err(io::Error::other)?;
+        let length = usize::try_from(read_u32(ico, entry_offset + 8)?).map_err(io::Error::other)?;
+        let data_offset =
+            usize::try_from(read_u32(ico, entry_offset + 12)?).map_err(io::Error::other)?;
         let data_end = data_offset
             .checked_add(length)
             .ok_or_else(|| io::Error::other("ICO image offset overflow"))?;
@@ -108,9 +107,9 @@ fn read_u16(data: &[u8], offset: usize) -> io::Result<u16> {
     let end = offset
         .checked_add(2)
         .ok_or_else(|| io::Error::other("binary offset overflow"))?;
-    let bytes = data.get(offset..end).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data")
-    })?;
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data"))?;
     Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
@@ -119,12 +118,10 @@ fn read_u32(data: &[u8], offset: usize) -> io::Result<u32> {
     let end = offset
         .checked_add(4)
         .ok_or_else(|| io::Error::other("binary offset overflow"))?;
-    let bytes = data.get(offset..end).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data")
-    })?;
-    Ok(u32::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-    ]))
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "truncated binary data"))?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 #[cfg(windows)]

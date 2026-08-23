@@ -19,7 +19,7 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Right-clicking the floating ball opens an independent compact custom GPUI menu window with `Show main window`, `Close floating controller`, and `Exit`. The menu is sized like a context menu, stays tight against the ball, and dismisses when either mouse button is pressed elsewhere.
 - Hover visibility is driven by cursor polling across the ball and the independent list with a leave grace period. The list stays stable while the pointer moves from the ball into a session row, including when the MSTSC list is empty.
 - The session popup is forced to a compact 240px width, resizes vertically to the number of visible MSTSC sessions, and is anchored directly below the floating ball (falling back above only when the bottom screen edge has insufficient room).
-- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window. Its X/Y position is persisted after dragging and restored on the next launch, with a first-run fallback near the right edge of the primary display.
+- The floating ball is manually dragged through Win32 cursor tracking and `SetWindowPos`, so it can be moved across the virtual desktop without depending on GPUI borderless-caption behavior. A normal click on the ball restores the main mstsc-mgr window; a drag is distinguished from a click so moving the ball does not open the main window. Its X/Y position is persisted from the native drag lifecycle and restored only after GPUI HWND initialization has settled; first run places it near the primary display's right edge around the upper-middle area.
 - MSTSC discovery is system-wide: sessions are included whether they were launched by mstsc-mgr, opened manually through `mstsc.exe`, opened from an `.rdp` file, or started by another application. Saved connections are **not** used as a filter for window discovery.
 - Current MSTSC windows are placed into a stable PID/HWND order before the shared snapshot is published. Hover-list numbers and `Alt+Shift+1..9` therefore use the same ordering and no longer change merely because focus or Windows Z-order changes.
 - Click a floating list row to restore/activate its MSTSC window. Activation temporarily joins the relevant Windows input queues to satisfy foreground-window restrictions, then detaches immediately.
@@ -62,12 +62,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.10`.
+- Push a matching SemVer tag such as `v0.2.11`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.11 2026-08-23 11:32:00
+
+- Changed floating-ball startup to create the popup hidden, wait until the GPUI/Win32 HWND initialization has settled, then apply the saved/default native coordinates before making the controller visible; this prevents later GPUI bounds initialization from overwriting the position back to the top-left corner.
+- Moved coordinate persistence onto a native drag watcher that observes actual HWND movement while the left button is held and writes the final X/Y only after release, removing the unreliable dependency on GPUI receiving `on_mouse_up` after a manual Win32 drag.
+- Changed the first-run fallback to the primary display's right edge at roughly 30% of screen height, matching the intended right-side placement while preserving virtual-desktop bounds validation for saved coordinates.
 
 ### version 0.2.10 2026-08-23 11:16:00
 

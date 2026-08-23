@@ -7,16 +7,16 @@ use anyhow::{Context, Result, bail};
 use std::{cell::RefCell, ffi::c_void};
 use windows::{
     Win32::{
-        Foundation::{HINSTANCE, HMENU, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-            GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, IDYES, LoadCursorW, MB_ICONERROR,
-            MB_ICONQUESTION, MB_OK, MB_YESNO, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
-            SW_SHOW, SendMessageW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-            WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION,
-            WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+            GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW, IDYES, LoadCursorW,
+            MB_ICONERROR, MB_ICONQUESTION, MB_OK, MB_YESNO, MSG, MessageBoxW, PostQuitMessage,
+            RegisterClassW, SW_SHOW, SendMessageW, SetWindowTextW, ShowWindow, TranslateMessage,
+            WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WNDCLASSW, WS_BORDER,
+            WS_CAPTION, WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
         },
     },
     core::{HSTRING, PCWSTR, w},
@@ -653,14 +653,19 @@ fn refresh_list(select: Option<usize>) -> Result<()> {
     // SAFETY: list is a live LISTBOX child control. LB_* messages are synchronous and any UTF-16
     // pointer used by LB_ADDSTRING remains valid until SendMessageW returns.
     unsafe {
-        let _ = SendMessageW(list, LB_RESETCONTENT_MSG, WPARAM(0), LPARAM(0));
+        let _ = SendMessageW(
+            list,
+            LB_RESETCONTENT_MSG,
+            Some(WPARAM(0)),
+            Some(LPARAM(0)),
+        );
         for entry in &entries {
             let wide = wide_null(entry);
             let _ = SendMessageW(
                 list,
                 LB_ADDSTRING_MSG,
-                WPARAM(0),
-                LPARAM(wide.as_ptr() as isize),
+                Some(WPARAM(0)),
+                Some(LPARAM(wide.as_ptr() as isize)),
             );
         }
     }
@@ -673,7 +678,12 @@ fn set_list_selection(index: Option<usize>) -> Result<()> {
     let value = index.unwrap_or(usize::MAX);
     // SAFETY: list is a live LISTBOX child and LB_SETCURSEL does not retain any pointers.
     unsafe {
-        let _ = SendMessageW(list, LB_SETCURSEL_MSG, WPARAM(value), LPARAM(0));
+        let _ = SendMessageW(
+            list,
+            LB_SETCURSEL_MSG,
+            Some(WPARAM(value)),
+            Some(LPARAM(0)),
+        );
     }
     APP.with(|cell| {
         if let Some(app) = cell.borrow_mut().as_mut() {
@@ -686,7 +696,15 @@ fn set_list_selection(index: Option<usize>) -> Result<()> {
 fn current_list_selection() -> Result<Option<usize>> {
     let list = handles()?.list;
     // SAFETY: list is a live LISTBOX child and LB_GETCURSEL only returns an integer index.
-    let value = unsafe { SendMessageW(list, LB_GETCURSEL_MSG, WPARAM(0), LPARAM(0)).0 };
+    let value = unsafe {
+        SendMessageW(
+            list,
+            LB_GETCURSEL_MSG,
+            Some(WPARAM(0)),
+            Some(LPARAM(0)),
+        )
+        .0
+    };
     if value < 0 {
         Ok(None)
     } else {

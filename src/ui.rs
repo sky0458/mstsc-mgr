@@ -11,17 +11,17 @@ use windows::{
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
-            BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BST_CHECKED,
-            COLOR_WINDOW, CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-            DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, EnableWindow, GWLP_USERDATA,
-            GetMessageW, GetSysColorBrush, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW,
-            HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK,
-            LoadCursorW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW,
-            PostQuitMessage, RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow,
-            SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-            WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WNDCLASSW, WS_BORDER,
-            WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX,
-            WS_OVERLAPPED, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+            BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
+            CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
+            DispatchMessageW, ES_AUTOHSCROLL, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
+            GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR,
+            LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK, LoadCursorW, MB_ICONERROR,
+            MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOW,
+            SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
+            TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
+            WM_DESTROY, WM_NCCREATE, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
+            WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_OVERLAPPED,
+            WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
         },
     },
     core::{HSTRING, PCWSTR, w},
@@ -44,6 +44,9 @@ const ID_PASSWORD: i32 = 205;
 const ID_FULLSCREEN: i32 = 206;
 const ID_OK: i32 = 207;
 const ID_CANCEL: i32 = 208;
+
+const BUTTON_CHECKED: usize = 1;
+const COLOR_WINDOW_BRUSH: isize = 6;
 
 thread_local! {
     static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
@@ -126,7 +129,7 @@ pub fn run() -> Result<()> {
 
 fn register_classes(instance: HINSTANCE) -> Result<()> {
     let cursor = unsafe { LoadCursorW(None, IDC_ARROW).context("LoadCursorW failed")? };
-    let background: HBRUSH = unsafe { GetSysColorBrush(COLOR_WINDOW) };
+    let background = HBRUSH(COLOR_WINDOW_BRUSH as *mut c_void);
     let main = WNDCLASSW {
         lpfnWndProc: Some(main_window_proc),
         hInstance: instance,
@@ -174,7 +177,7 @@ unsafe extern "system" fn main_window_proc(
                 ID_DELETE if notification == BN_CLICKED as i32 => delete_connection(hwnd),
                 ID_CONNECT if notification == BN_CLICKED as i32 => connect_selected(hwnd),
                 ID_OPEN_DATA if notification == BN_CLICKED as i32 => open_data_folder(hwnd),
-                ID_LIST if notification == LBN_DBLCLK => connect_selected(hwnd),
+                ID_LIST if notification == LBN_DBLCLK as i32 => connect_selected(hwnd),
                 _ => {}
             }
             LRESULT(0)
@@ -244,7 +247,7 @@ unsafe fn create_control(
     ex_style: WINDOW_EX_STYLE,
     class_name: PCWSTR,
     text: &str,
-    style: windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE,
+    style: WINDOW_STYLE,
     x: i32,
     y: i32,
     width: i32,
@@ -274,6 +277,15 @@ unsafe fn create_control(
     .unwrap_or_default()
 }
 
+unsafe fn send_message(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> LRESULT {
+    SendMessageW(
+        hwnd,
+        message,
+        Some(WPARAM(wparam)),
+        Some(LPARAM(lparam)),
+    )
+}
+
 fn refresh_list() {
     let count = APP_STATE.with(|slot| {
         let state_ref = slot.borrow();
@@ -281,7 +293,7 @@ fn refresh_list() {
             return 0;
         };
         unsafe {
-            SendMessageW(state.list, LB_RESETCONTENT, WPARAM(0), LPARAM(0));
+            send_message(state.list, LB_RESETCONTENT, 0, 0);
             for item in &state.store.connections {
                 let user = if item.username.trim().is_empty() {
                     "<prompt>"
@@ -290,12 +302,7 @@ fn refresh_list() {
                 };
                 let line = format!("{}    {}    {}", item.name, item.endpoint(), user);
                 let wide = wide_null(&line);
-                SendMessageW(
-                    state.list,
-                    LB_ADDSTRING,
-                    WPARAM(0),
-                    LPARAM(wide.as_ptr() as isize),
-                );
+                send_message(state.list, LB_ADDSTRING, 0, wide.as_ptr() as isize);
             }
         }
         state.store.connections.len()
@@ -307,7 +314,7 @@ fn selected_index() -> Option<usize> {
     APP_STATE.with(|slot| {
         let state_ref = slot.borrow();
         let state = state_ref.as_ref()?;
-        let index = unsafe { SendMessageW(state.list, LB_GETCURSEL, WPARAM(0), LPARAM(0)).0 };
+        let index = unsafe { send_message(state.list, LB_GETCURSEL, 0, 0).0 };
         if index == LB_ERR as isize {
             None
         } else {
@@ -478,7 +485,6 @@ fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Op
         .ok()?
     };
     unsafe {
-        let _ = EnableWindow(parent, false);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
     }
@@ -492,7 +498,6 @@ fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Op
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        let _ = EnableWindow(parent, true);
         let _ = SetForegroundWindow(parent);
     }
 
@@ -591,7 +596,7 @@ unsafe fn create_editor_controls(parent: HWND) {
         WINDOW_EX_STYLE::default(),
         w!("BUTTON"),
         "Full screen (/f)",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
         136,
         232,
         180,
@@ -600,18 +605,13 @@ unsafe fn create_editor_controls(parent: HWND) {
         ID_FULLSCREEN,
     );
     if initial.as_ref().is_some_and(|p| p.fullscreen) {
-        SendMessageW(
-            data.fullscreen,
-            BM_SETCHECK,
-            WPARAM(BST_CHECKED.0 as usize),
-            LPARAM(0),
-        );
+        send_message(data.fullscreen, BM_SETCHECK, BUTTON_CHECKED, 0);
     }
     let _ = create_control(
         WINDOW_EX_STYLE::default(),
         w!("BUTTON"),
         "Save",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
         226,
         274,
         86,
@@ -646,9 +646,9 @@ unsafe fn create_edit(
     id: i32,
     password: bool,
 ) -> HWND {
-    let mut style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL;
+    let mut style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32);
     if password {
-        style |= windows::Win32::UI::WindowsAndMessaging::ES_PASSWORD;
+        style |= WINDOW_STYLE(windows::Win32::UI::WindowsAndMessaging::ES_PASSWORD as u32);
     }
     create_control(
         WS_EX_CLIENTEDGE,
@@ -673,8 +673,8 @@ unsafe fn save_editor(hwnd: HWND) {
     let port_text = get_text(data.port);
     let username = get_text(data.username).trim().to_string();
     let password = get_text(data.password);
-    let fullscreen = SendMessageW(data.fullscreen, BM_GETCHECK, WPARAM(0), LPARAM(0)).0
-        == BST_CHECKED.0 as isize;
+    let fullscreen = send_message(data.fullscreen, BM_GETCHECK, 0, 0).0
+        == BUTTON_CHECKED as isize;
 
     if host.is_empty() {
         show_error(Some(hwnd), "Host / IP is required.");

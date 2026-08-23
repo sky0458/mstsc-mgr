@@ -1,4 +1,5 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 #[cfg(windows)]
 mod crypto;

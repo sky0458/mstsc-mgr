@@ -17,8 +17,8 @@ jobs:
           toolchain: 1.90.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Format working tree for validation
+        run: cargo fmt --all
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Test

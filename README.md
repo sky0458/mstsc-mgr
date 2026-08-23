@@ -58,12 +58,7 @@ cargo build --release
 
 ## Release
 
-A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025` and publishes two x64 ZIP assets from the same release executable:
-
-- `mstsc-mgr-windows-x64.zip`: standard package for current Windows 10/11 and newer Windows Server versions. It relies on the system ICU shipped by modern Windows.
-- `mstsc-mgr-windows-legacy-x64.zip`: compatibility package for **Windows Server 2016 / Windows 10 1607 (x64)**. It additionally ships a tiny project-built `icuuc.dll` compatibility shim that implements the only ICU entry point imported by GPUI 0.2.2 (`u_strlen`). Keep `icuuc.dll` beside `mstsc-mgr.exe` when using this package.
-
-CI and Release validate that `mstsc-mgr.exe` imports `icuuc.dll!u_strlen` and that the compatibility shim exports `u_strlen` before either package is uploaded. The standard package deliberately does not contain the shim. The legacy package addresses the ICU loader incompatibility on Windows Server 2016 / Windows 10 1607; that OS target still requires normal application smoke testing because GPUI itself does not publish an official Server 2016 support guarantee.
+A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/release.yml` builds on `windows-2025`, packages `mstsc-mgr.exe`, the project ICO, README and LICENSE into `mstsc-mgr-windows-x64.zip`, and publishes it as a GitHub Release asset.
 
 Two release paths are supported:
 
@@ -79,8 +74,6 @@ Entries are ordered newest to oldest.
 - Rolled the floating-ball startup lifecycle back to the v0.2.10 behavior: the 64×64 popup is created with its normal visibility and native circular configuration instead of being created hidden, eliminating the oversized temporary HWND/elliptical region regression introduced in v0.2.11.
 - Reimplemented startup coordinate recovery as a delayed position-only stabilization pass. It validates that the native ball bounds are already small/settled, then uses `SetWindowPos(..., SWP_NOSIZE)` so saved/default placement can never resize or reshape the floating ball.
 - Reimplemented coordinate persistence with a native position watcher that detects actual ball movement while the left button is held and saves the final X/Y on release, while leaving the v0.2.10 drag, click, hover, menu, opacity and circular-region code unchanged.
-- Added dual Windows release packages: the standard package remains unchanged for current Windows versions, while a separate Windows Server 2016 / Windows 10 1607 compatibility ZIP includes a minimal `icuuc.dll` shim providing GPUI 0.2.2's sole ICU import, `u_strlen`.
-- Added CI/Release PE contract checks for the ICU import/export and publish both `mstsc-mgr-windows-x64.zip` and `mstsc-mgr-windows-legacy-x64.zip` from the same tested executable.
 
 ### version 0.2.11 2026-08-23 11:32:00
 

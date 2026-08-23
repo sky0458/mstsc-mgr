@@ -16,6 +16,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
@@ -25,8 +26,41 @@ jobs:
         run: cargo test --workspace
       - name: Release build
         run: cargo build --release
-      - name: Upload executable
+      - name: Build Windows Server 2016 compatibility shim
+        shell: pwsh
+        run: |
+          cl /nologo /LD /O2 /MT /GS- compat\icuuc_shim.c /link /NOLOGO /OUT:target\release\icuuc.dll
+      - name: Verify legacy ICU compatibility contract
+        shell: pwsh
+        run: |
+          $imports = dumpbin /imports:icuuc.dll target\release\mstsc-mgr.exe | Out-String
+          if ($imports -notmatch '(?im)\bu_strlen\b') {
+            throw "mstsc-mgr.exe no longer imports icuuc.dll!u_strlen; review the legacy compatibility package"
+          }
+          $exports = dumpbin /exports target\release\icuuc.dll | Out-String
+          if ($exports -notmatch '(?im)\bu_strlen\b') {
+            throw "legacy icuuc.dll does not export u_strlen"
+          }
+      - name: Package Windows variants
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\standard,dist\legacy | Out-Null
+          foreach ($dir in @('dist\standard', 'dist\legacy')) {
+            Copy-Item target\release\mstsc-mgr.exe "$dir\mstsc-mgr.exe"
+            Copy-Item assets\mstsc-mgr.ico "$dir\mstsc-mgr.ico"
+            Copy-Item README.md "$dir\README.md"
+            Copy-Item LICENSE "$dir\LICENSE"
+          }
+          Copy-Item target\release\icuuc.dll dist\legacy\icuuc.dll
+          Compress-Archive -Path dist\standard\* -DestinationPath mstsc-mgr-windows-x64.zip
+          Compress-Archive -Path dist\legacy\* -DestinationPath mstsc-mgr-windows-legacy-x64.zip
+      - name: Upload standard Windows package
         uses: actions/upload-artifact@v4
         with:
           name: mstsc-mgr-windows-x64
-          path: target/release/mstsc-mgr.exe
+          path: mstsc-mgr-windows-x64.zip
+      - name: Upload Server 2016 / Windows 10 1607 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mstsc-mgr-windows-legacy-x64
+          path: mstsc-mgr-windows-legacy-x64.zip

@@ -17,9 +17,10 @@ This file is authoritative for all human and AI contributors.
 - `config.rs`: application paths, settings/vault persistence, import/export orchestration.
 - `crypto.rs`: encryption/decryption only. Local secrets use Windows DPAPI.
 - `logging.rs`: diagnostic file writer/bootstrap only. It may consume runtime settings but must never serialize or log secrets.
-- `platform.rs`: Win32 process/window/credential/hotkey/keepalive/floating-window/tray operations shared across the application.
+- `platform.rs`: core Win32 process/window/credential/hotkey/keepalive/floating-window/tray operations shared across the application.
+- `platform_actions.rs`: focused user-triggered Win32 window actions layered on top of `platform.rs`, currently Host Desktop switching and main-window native-frame repair. It must reuse the system-wide MSTSC enumeration from `platform.rs` rather than duplicate process-identification logic.
 - `floating_position.rs`: Win32 floating-ball startup placement and native drag-position persistence only; it may update non-secret position settings through `config`.
-- `floating.rs`: GPUI presentation/state for the independent floating-ball and MSTSC-list popup components; general native HWND work stays in `platform.rs`, while startup placement/persistence stays in `floating_position.rs`.
+- `floating.rs`: GPUI presentation/state for the independent floating-ball and MSTSC-list popup components; general native HWND work stays in `platform.rs`/`platform_actions.rs`, while startup placement/persistence stays in `floating_position.rs`.
 - `ui.rs`: main GPUI presentation and user interaction. UI code must call the modules above rather than duplicating platform logic.
 - `main.rs`: application composition/bootstrap only.
 

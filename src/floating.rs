@@ -1,4 +1,4 @@
-use crate::{config, platform, ui::AppState};
+use crate::{config, platform, platform_actions, ui::AppState};
 use anyhow::{Context as _, Result};
 use gpui::{
     App, Bounds, Context, IntoElement, MouseButton, ParentElement, Render,
@@ -34,12 +34,12 @@ const ACCENT: u32 = 0x38bdf8;
 
 const FLOATING_BALL_SIZE: f32 = 64.0;
 const FLOATING_LIST_WIDTH: f32 = 240.0;
-const FLOATING_LIST_BASE_HEIGHT: f32 = 48.0;
+const FLOATING_LIST_BASE_HEIGHT: f32 = 56.0;
 const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
 const FLOATING_MAX_TABS: usize = 9;
 const FLOATING_MENU_WIDTH: f32 = 180.0;
 const FLOATING_MENU_ITEM_HEIGHT: f32 = 32.0;
-const FLOATING_MENU_ITEM_COUNT: usize = 3;
+const FLOATING_MENU_ITEM_COUNT: usize = 4;
 const FLOATING_MENU_OUTER_PADDING: f32 = 8.0;
 const FLOATING_MENU_GAP_HEIGHT: f32 = 4.0;
 const FLOATING_MENU_GAP: i32 = 2;
@@ -530,7 +530,7 @@ impl Render for FloatingBall {
 
         let release_state = Arc::clone(&self.state);
         div()
-            .id("floating-ball-v4")
+            .id("floating-ball-v5")
             .size_full()
             .rounded_full()
             .bg(rgb(ACCENT))
@@ -550,8 +550,15 @@ impl Render for FloatingBall {
             .on_mouse_up(MouseButton::Left, move |_, _, _| {
                 persist_current_floating_position_after_drag(Arc::clone(&release_state));
                 let _ = set_context_menu_visible(false);
-                if let Err(error) = platform::handle_floating_ball_click() {
-                    tracing::error!(%error, "failed to open main window from floating ball");
+                match platform::handle_floating_ball_click() {
+                    Ok(()) => {
+                        if let Err(error) = platform_actions::repair_main_window_frame() {
+                            tracing::warn!(%error, "failed to refresh main-window frame after floating-ball click");
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "failed to open main window from floating ball");
+                    }
                 }
             })
             .on_mouse_up(MouseButton::Right, |_, _, _| {
@@ -631,7 +638,7 @@ impl Render for FloatingList {
                 let label = format!("{}  {}", index + 1, mstsc.title);
                 rows = rows.child(
                     div()
-                        .id(("mstsc-list-row-v4", index))
+                        .id(("mstsc-list-row-v5", index))
                         .w_full()
                         .h(px(32.0))
                         .px_2()
@@ -652,6 +659,27 @@ impl Render for FloatingList {
             }
         }
 
+        let host_desktop = div()
+            .id("floating-list-host-desktop")
+            .w_full()
+            .h(px(32.0))
+            .px_2()
+            .rounded_md()
+            .bg(rgb(0x0f172a))
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(TEXT))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .on_click(|_, _, _| {
+                let _ = platform::set_floating_list_visible(false);
+                if let Err(error) = platform_actions::host_desktop() {
+                    tracing::error!(%error, "failed to switch to host desktop from floating list");
+                }
+            })
+            .child("Host Desktop");
+
         div().size_full().p_1().child(
             v_flex()
                 .size_full()
@@ -660,13 +688,7 @@ impl Render for FloatingList {
                 .rounded_lg()
                 .bg(rgb(PANEL))
                 .opacity(opacity)
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(TEXT))
-                        .child("MSTSC sessions"),
-                )
+                .child(host_desktop)
                 .child(rows),
         )
     }
@@ -719,11 +741,40 @@ impl Render for FloatingContextMenu {
                     .cursor_pointer()
                     .on_click(|_, _, _| {
                         let _ = set_context_menu_visible(false);
-                        if let Err(error) = platform::show_main_window() {
-                            tracing::error!(%error, "failed to show main window from floating menu");
+                        match platform::show_main_window() {
+                            Ok(()) => {
+                                if let Err(error) = platform_actions::repair_main_window_frame() {
+                                    tracing::warn!(%error, "failed to refresh main-window frame after floating-menu open");
+                                }
+                            }
+                            Err(error) => {
+                                tracing::error!(%error, "failed to show main window from floating menu");
+                            }
                         }
                     })
                     .child("Show main window"),
+            )
+            .child(
+                div()
+                    .id("floating-menu-host-desktop")
+                    .w_full()
+                    .h(px(FLOATING_MENU_ITEM_HEIGHT))
+                    .px_3()
+                    .rounded_md()
+                    .bg(rgb(0x0f172a))
+                    .text_sm()
+                    .text_color(rgb(TEXT))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(|_, _, _| {
+                        let _ = set_context_menu_visible(false);
+                        let _ = platform::set_floating_list_visible(false);
+                        if let Err(error) = platform_actions::host_desktop() {
+                            tracing::error!(%error, "failed to switch to host desktop from floating menu");
+                        }
+                    })
+                    .child("Host Desktop"),
             )
             .child(
                 div()

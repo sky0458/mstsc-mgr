@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::too_many_arguments, clippy::collapsible_if)]
 
 #[cfg(windows)]
 mod crypto;

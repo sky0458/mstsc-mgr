@@ -80,17 +80,16 @@ fn apply_startup_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     let width = (rect.right - rect.left).max(1);
     let height = (rect.bottom - rect.top).max(1);
     // SAFETY: GetSystemMetrics reads process-independent desktop geometry.
-    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) =
-        unsafe {
-            (
-                GetSystemMetrics(SM_XVIRTUALSCREEN),
-                GetSystemMetrics(SM_YVIRTUALSCREEN),
-                GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                GetSystemMetrics(SM_CYVIRTUALSCREEN),
-                GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            )
-        };
+    let (virtual_left, virtual_top, virtual_width, virtual_height, primary_width, primary_height) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXSCREEN),
+            GetSystemMetrics(SM_CYSCREEN),
+        )
+    };
 
     let max_x = virtual_left
         .saturating_add(virtual_width)

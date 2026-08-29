@@ -16,7 +16,7 @@ Only external MSTSC account management is included:
 - Save connection name, host/IP, port and username.
 - Save passwords encrypted with the current Windows user's DPAPI key.
 - Add, edit and delete saved connections.
-- Double-click a connection or press **Connect** to launch the system `mstsc.exe`.
+- Double-click a connection or press **Connect** to launch the system `mstsc.exe`. The native ListBox enables `LBS_NOTIFY`, so double-click emits `LBN_DBLCLK` instead of being silently ignored.
 - Before launch, the selected account is written as a Generic Windows credential for `TERMSRV/<host>`.
 - A per-connection temporary `.rdp` file is generated without any plaintext password. It explicitly sets `prompt for credentials:i:0`, `authentication level:i:0`, `enablecredsspsupport:i:1` and `promptcredentialonce:i:1` so the external client does not inherit an incompatible `Default.rdp` setting.
 - `authentication level:i:0` corresponds to MSTSC's **Connect and don't warn me** server-authentication behavior. This is enabled for compatibility with older/internal RDP endpoints and means server identity warnings are not enforced by this profile.

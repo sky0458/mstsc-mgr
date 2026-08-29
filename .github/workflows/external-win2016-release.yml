@@ -1,0 +1,78 @@
+name: External Win2016 Release
+
+on:
+  push:
+    branches: ["external/win2016-native"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: startsWith(github.event.head_commit.message, 'release:')
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.90.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+
+      - name: Verify Server 2016 dependency surface
+        shell: pwsh
+        run: |
+          $exe = "target/release/mstsc-mgr-external.exe"
+          $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+          if (-not $dumpbin) {
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $dumpbinPath = Get-ChildItem "$install\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          } else {
+            $dumpbinPath = $dumpbin.Source
+          }
+          if (-not $dumpbinPath) { throw "dumpbin.exe not found" }
+          $imports = & $dumpbinPath /DEPENDENTS $exe | Out-String
+          foreach ($blocked in @("d3d11.dll", "dxgi.dll", "dcomp.dll", "icuuc.dll", "WebView2Loader.dll")) {
+            if ($imports -match [regex]::Escape($blocked)) { throw "unexpected import $blocked" }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = ((Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value)
+          $dir = "dist/mstsc-mgr-external-win2016-x64"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/release/mstsc-mgr-external.exe" "$dir/mstsc-mgr-external.exe"
+          Copy-Item "README.md" "$dir/README.md"
+          Copy-Item "LICENSE" "$dir/LICENSE"
+          Compress-Archive -Path "$dir/*" -DestinationPath "dist/mstsc-mgr-external-win2016-x64.zip" -Force
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=external-v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mstsc-mgr-external-win2016-x64
+          path: dist/mstsc-mgr-external-win2016-x64.zip
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:RELEASE_TAG `
+            "dist/mstsc-mgr-external-win2016-x64.zip" `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "mstsc-mgr external v$env:RELEASE_VERSION" `
+            --notes "Independent native Rust/Win32 external MSTSC account manager for Windows Server 2016 / Windows 10 1607+ x64. Includes double-click launch, DPAPI-protected saved passwords, generated CredSSP-compatible RDP profiles, and no GPUI/WebView/DirectX UI runtime dependency."

@@ -15,7 +15,7 @@ use windows::{
             CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
             DispatchMessageW, ES_AUTOHSCROLL, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
             GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR,
-            LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK, LoadCursorW, MB_ICONERROR,
+            LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK, LBS_NOTIFY, LoadCursorW, MB_ICONERROR,
             MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOW,
             SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
             TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
@@ -195,7 +195,7 @@ unsafe fn create_main_controls(parent: HWND) {
         WS_EX_CLIENTEDGE,
         w!("LISTBOX"),
         "",
-        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL,
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | WINDOW_STYLE(LBS_NOTIFY as u32),
         16,
         16,
         732,
@@ -243,6 +243,7 @@ unsafe fn create_button(parent: HWND, text: &str, x: i32, y: i32, width: i32, id
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn create_control(
     ex_style: WINDOW_EX_STYLE,
     class_name: PCWSTR,
@@ -503,17 +504,17 @@ fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Op
 
     let data = unsafe { Box::from_raw(raw) };
     let mut result = data.result;
-    if let Some(result_ref) = result.as_mut() {
-        if let Some(password) = result_ref.password_changed_to.take() {
-            match crypto::protect_text(&password) {
-                Ok(protected) => result_ref.profile.protected_password = protected,
-                Err(error) => {
-                    show_error(
-                        Some(parent),
-                        &format!("Failed to protect password:\n{error:#}"),
-                    );
-                    return None;
-                }
+    if let Some(result_ref) = result.as_mut()
+        && let Some(password) = result_ref.password_changed_to.take()
+    {
+        match crypto::protect_text(&password) {
+            Ok(protected) => result_ref.profile.protected_password = protected,
+            Err(error) => {
+                show_error(
+                    Some(parent),
+                    &format!("Failed to protect password:\n{error:#}"),
+                );
+                return None;
             }
         }
     }

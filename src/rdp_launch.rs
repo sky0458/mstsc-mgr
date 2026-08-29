@@ -14,7 +14,8 @@ pub fn launch_connection(connection: &SavedConnection) -> Result<()> {
         bail!("host is required");
     }
 
-    let has_saved_credentials = !connection.username.trim().is_empty() && !connection.password.is_empty();
+    let has_saved_credentials =
+        !connection.username.trim().is_empty() && !connection.password.is_empty();
     tracing::info!(
         host = %connection.host,
         port = connection.port,
@@ -135,7 +136,11 @@ mod tests {
             port: 3390,
             username: "DOMAIN\\user".to_string(),
             password: "must-not-be-written".to_string(),
-            mstsc_args: vec!["/f".to_string(), "/v:wrong-host".to_string(), "/prompt".to_string()],
+            mstsc_args: vec![
+                "/f".to_string(),
+                "/v:wrong-host".to_string(),
+                "/prompt".to_string(),
+            ],
         }
     }
 

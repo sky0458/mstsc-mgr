@@ -43,8 +43,8 @@ fn write_rdp_credential(profile: &ConnectionProfile, password: &str) -> Result<(
     // entries can take precedence over the Generic credential that mstsc can consume.
     unsafe {
         let target_name = PCWSTR(target.as_ptr());
-        let _ = CredDeleteW(target_name, CRED_TYPE_GENERIC, 0);
-        let _ = CredDeleteW(target_name, CRED_TYPE_DOMAIN_PASSWORD, 0);
+        let _ = CredDeleteW(target_name, CRED_TYPE_GENERIC, None);
+        let _ = CredDeleteW(target_name, CRED_TYPE_DOMAIN_PASSWORD, None);
     }
 
     let credential = CREDENTIALW {

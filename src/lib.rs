@@ -13,6 +13,11 @@ pub mod logging;
 #[cfg(windows)]
 #[path = "platform.rs"]
 mod platform_native;
+// Keep the previous platform launch implementation internally reachable while the public platform
+// facade routes saved connections to rdp_launch. This avoids exposing a second public launch API
+// and keeps the existing platform.rs file untouched for this focused credential fix.
+#[cfg(windows)]
+const _: fn(&domain::SavedConnection) -> anyhow::Result<()> = platform_native::launch_connection;
 #[cfg(windows)]
 pub mod rdp_launch;
 #[cfg(windows)]

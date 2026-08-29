@@ -11,7 +11,27 @@ pub mod floating_position;
 #[cfg(windows)]
 pub mod logging;
 #[cfg(windows)]
-pub mod platform;
+#[path = "platform.rs"]
+mod platform_native;
+// Keep the previous platform launch implementation internally reachable while the public platform
+// facade routes saved connections to rdp_launch. This avoids exposing a second public launch API
+// and keeps the existing platform.rs file untouched for this focused credential fix.
+#[cfg(windows)]
+const _: fn(&domain::SavedConnection) -> anyhow::Result<()> = platform_native::launch_connection;
+#[cfg(windows)]
+pub mod rdp_launch;
+#[cfg(windows)]
+pub mod platform {
+    pub use crate::platform_native::{
+        FLOATING_BALL_WINDOW_TITLE, FLOATING_LIST_WINDOW_TITLE, MAIN_WINDOW_TITLE, RuntimeSettings,
+        WindowSnapshot, activate_window, begin_floating_drag, configure_floating_ball_window,
+        configure_floating_list_window, cursor_in_floating_controls, enumerate_mstsc_windows,
+        handle_floating_ball_click, hide_main_window, set_floating_list_visible, show_main_window,
+        start_hotkey_worker, start_keepalive_worker, start_tray_worker, start_window_watcher,
+        take_force_exit_requested,
+    };
+    pub use crate::rdp_launch::launch_connection;
+}
 #[cfg(windows)]
 pub mod platform_actions;
 #[cfg(windows)]

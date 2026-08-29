@@ -8,7 +8,7 @@ A Windows 10+ native MSTSC manager written in **Rust + GPUI**, modeled after the
 - Uses an original project-specific application icon with no third-party product/logo artwork. A multi-resolution Windows ICO is embedded directly into `mstsc-mgr.exe` at build time and is also shipped in the release package.
 - Save multiple RDP connections with host, port, username, password and optional MSTSC arguments.
 - Passwords and the local vault are encrypted with Windows DPAPI; plaintext secrets are not written to disk.
-- Launches external `mstsc.exe` and writes `TERMSRV/<host>` credentials using Windows Credential Manager instead of putting passwords on the command line.
+- Launches external `mstsc.exe` through a dedicated per-connection `.rdp` profile. For saved username/password connections, mstsc-mgr clears stale Generic/Domain Password entries for `TERMSRV/<host>`, writes the current Generic credential, and suppresses an unnecessary credential re-prompt without putting the password in the command line or `.rdp` file.
 - Settings dialog for floating controller, floating opacity, persistent tabs, global hotkeys, close-to-tray, diagnostic logging and keepalive behavior.
 - Diagnostic logging defaults to enabled and writes `mstsc-mgr.log` next to `mstsc-mgr.exe` when that directory is writable. The Settings switch can stop subsequent log writes immediately; passwords, decrypted vault data and credential blobs are never logged.
 - Encrypted vault import/export. **v0.1/v0.2 exports are DPAPI current-user bound**, so importing requires the same Windows user profile.
@@ -42,7 +42,7 @@ Portable diagnostic output is written beside the executable when enabled:
 
 - `mstsc-mgr.log`: runtime diagnostics only; no passwords, decrypted vault JSON or credential blobs.
 
-When connecting, the password is copied into Windows Credential Manager for target `TERMSRV/<host>` through `CredWriteW`. Only `/v:<host[:port]>` and optional user-supplied MSTSC switches are passed to `mstsc.exe`.
+When a saved username/password is present, mstsc-mgr deletes stale Generic and Domain Password credentials for `TERMSRV/<host>` and writes the current Generic credential through `CredWriteW`. It then launches `mstsc.exe` with a generated UTF-16 `.rdp` file containing only host, username and non-secret RDP options. The password is never written to that file. Saved-credential profiles use `prompt for credentials:i:0`, while profiles without a saved password keep prompting normally. Mainline Windows builds do **not** force the Server-2016 compatibility branch's `authentication level:i:0`; normal server-authentication policy remains under MSTSC/Windows control.
 
 ## Development
 
@@ -63,12 +63,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.13`.
+- Push a matching SemVer tag such as `v0.2.14`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
 
 Entries are ordered newest to oldest.
+
+### version 0.2.14 2026-08-29 12:25:00
+
+- Ported the proven saved-password launch sequence from `external/win2016-native` into the current mainline without merging the legacy Server 2016 UI/runtime branch: stale `TERMSRV/<host>` Generic and Domain Password credentials are removed before the current Generic credential is written.
+- Replaced plain `mstsc.exe /v:<host>` startup for saved connections with a generated per-connection UTF-16 `.rdp` profile so `Default.rdp`, historical settings and stale credential state cannot silently override mstsc-mgr's intended username/password behavior. The generated file never contains the password.
+- Saved-credential profiles explicitly use `prompt for credentials:i:0`, `promptcredentialonce:i:1`, CredSSP and negotiated security, while profiles without a saved password continue to prompt. Conflicting `/v:` arguments are ignored and `/prompt` is ignored only when a saved password exists; other MSTSC switches remain supported. Mainline builds intentionally do not force the legacy branch's `authentication level:i:0` downgrade.
 
 ### version 0.2.13 2026-08-23 20:48:00
 

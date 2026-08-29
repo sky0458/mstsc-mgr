@@ -17,7 +17,8 @@ This file is authoritative for all human and AI contributors.
 - `config.rs`: application paths, settings/vault persistence, import/export orchestration.
 - `crypto.rs`: encryption/decryption only. Local secrets use Windows DPAPI.
 - `logging.rs`: diagnostic file writer/bootstrap only. It may consume runtime settings but must never serialize or log secrets.
-- `platform.rs`: core Win32 process/window/credential/hotkey/keepalive/floating-window/tray operations shared across the application.
+- `rdp_launch.rs`: deterministic saved-connection launch only. It owns `TERMSRV/<host>` Credential Manager refresh, generated per-connection `.rdp` launch profiles, and `mstsc.exe` startup. Generated RDP files may contain host/username/options but must never contain a password.
+- `platform.rs`: core Win32 process/window/hotkey/keepalive/floating-window/tray operations shared across the application. New connection-launch behavior belongs in `rdp_launch.rs`; the public `platform` facade may route `launch_connection` there for compatibility with existing UI callers.
 - `platform_actions.rs`: focused user-triggered Win32 window actions layered on top of `platform.rs`, currently Host Desktop switching and main-window native-frame repair. It must reuse the system-wide MSTSC enumeration from `platform.rs` rather than duplicate process-identification logic.
 - `floating_position.rs`: Win32 floating-ball startup placement and native drag-position persistence only; it may update non-secret position settings through `config`.
 - `floating.rs`: GPUI presentation/state for the independent floating-ball and MSTSC-list popup components; general native HWND work stays in `platform.rs`/`platform_actions.rs`, while startup placement/persistence stays in `floating_position.rs`.
@@ -31,7 +32,8 @@ Keep platform handles out of persisted models. Raw HWND values may exist in runt
 - Never log passwords, decrypted vault JSON, credential blobs, DPAPI plaintext, or other secret material.
 - `SavedConnection::Debug` must keep password redaction intact.
 - Passwords must not be placed on the `mstsc.exe` command line, environment, temp `.rdp` files, or README/examples.
-- For connection launch, store `TERMSRV/<host>` credentials through Windows Credential Manager (`CredWriteW`) and pass only host/port/options to `mstsc.exe`.
+- For a saved username/password, refresh `TERMSRV/<host>` through Windows Credential Manager before launch: delete stale Generic and Domain Password entries for the same target, then write the current Generic credential with `CredWriteW`.
+- Connection launch may use a generated per-connection `.rdp` file to make MSTSC settings deterministic and avoid `Default.rdp`/history overrides. Such files may contain host, username and non-secret RDP options only; never serialize the password into them.
 - Local vault and export files must contain encrypted bytes only. v0.1 uses current-user DPAPI, so exports are intentionally bound to the same Windows user profile.
 
 ## Windows integration constraints

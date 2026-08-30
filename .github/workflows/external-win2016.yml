@@ -2,7 +2,7 @@ name: External Win2016 Native
 
 on:
   pull_request:
-    branches: ["external/win2016-ci-base"]
+    branches: ["external/win2016-ci-v011-base"]
 
 permissions:
   contents: read

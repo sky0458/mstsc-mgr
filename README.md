@@ -16,9 +16,11 @@ Only external MSTSC account management is included:
 - Save connection name, host/IP, port and username.
 - Save passwords encrypted with the current Windows user's DPAPI key.
 - Add, edit and delete saved connections.
-- Double-click a connection or press **Connect** to launch the system `mstsc.exe`. The native ListBox enables `LBS_NOTIFY`, so double-click emits `LBN_DBLCLK` instead of being silently ignored.
-- Before launch, the selected account is written as a Generic Windows credential for `TERMSRV/<host>`.
-- A per-connection temporary `.rdp` file is generated without any plaintext password. It explicitly sets `prompt for credentials:i:0`, `authentication level:i:0`, `enablecredsspsupport:i:1` and `promptcredentialonce:i:1` so the external client does not inherit an incompatible `Default.rdp` setting.
+- Double-click a connection or press **Connect** to launch the system `mstsc.exe`.
+- A per-connection temporary `.rdp` file is generated for every launch.
+- The saved password is decrypted only at launch time, then re-encrypted with Windows DPAPI over UTF-16LE bytes and embedded as the standard `password 51:b:<DPAPI hex>` RDP setting. The password is never written as plaintext.
+- Domain-style usernames such as `DOMAIN\\user` are written as separate `domain:s:DOMAIN` and `username:s:user` settings for compatibility with older MSTSC/CredSSP behavior.
+- The generated RDP profile explicitly sets `prompt for credentials:i:0`, `authentication level:i:0`, `enablecredsspsupport:i:1`, `promptcredentialonce:i:1`, `negotiate security layer:i:1` and `public mode:i:0`.
 - `authentication level:i:0` corresponds to MSTSC's **Connect and don't warn me** server-authentication behavior. This is enabled for compatibility with older/internal RDP endpoints and means server identity warnings are not enforced by this profile.
 - CredSSP is explicitly enabled, matching the compatibility option commonly required by Windows Server / RDO-managed connections.
 - Optional full-screen launch.
@@ -33,11 +35,11 @@ Profiles are stored at:
 %LOCALAPPDATA%\mstsc-mgr-external\connections.json
 ```
 
-Passwords are never stored as plaintext in the profile or generated `.rdp` file. They are encrypted using Windows DPAPI (`CryptProtectData`) and can only be decrypted by the same Windows user profile on the same Windows installation context. When a connection is launched, the decrypted password is written to Windows Credential Manager only for the `TERMSRV/<host>` target used by MSTSC.
+Passwords are stored in the profile only as DPAPI-protected Base64 blobs. On launch, the application decrypts the saved password in memory and immediately creates the MSTSC-compatible `password 51:b:` DPAPI blob for the generated `.rdp` file. That RDP password blob is bound to the current Windows user/machine context and cannot be used as plaintext.
 
-Before writing the current Generic credential, stale Generic/Domain Password entries for the same `TERMSRV/<host>` target are removed to avoid MSTSC selecting an older saved account. The generated `.rdp` file is stored in the current user's temporary directory and contains only connection settings and username.
+The application no longer relies on a `TERMSRV/<host>` Credential Manager entry as the primary password path. This avoids stale or conflicting saved credentials taking precedence over the selected profile.
 
-If a domain policy explicitly forces **Always prompt for password upon connection** or blocks saved-credential delegation for `TERMSRV/*`, Windows policy can still override these client settings.
+If a domain policy explicitly forces **Always prompt for password upon connection** or blocks credential delegation, Windows policy can still override client-side RDP settings.
 
 ## Build
 

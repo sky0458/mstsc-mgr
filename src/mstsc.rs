@@ -1,27 +1,24 @@
 use crate::{crypto, model::ConnectionProfile};
 use anyhow::{Context, Result, bail};
-use std::{fs, mem::size_of, path::PathBuf, process::Command};
-use windows::{
-    Win32::Security::Credentials::{
-        CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_DOMAIN_PASSWORD, CRED_TYPE_GENERIC, CREDENTIALW,
-        CredDeleteW, CredWriteW,
-    },
-    core::{PCWSTR, PWSTR},
-};
+use std::{fs, path::PathBuf, process::Command};
 
 pub fn launch(profile: &ConnectionProfile) -> Result<()> {
     if profile.host.trim().is_empty() {
         bail!("host is required");
     }
 
-    if !profile.username.trim().is_empty() && !profile.protected_password.is_empty() {
+    let rdp_password = if profile.protected_password.is_empty() {
+        None
+    } else {
         let password = crypto::unprotect_text(&profile.protected_password)?;
-        if !password.is_empty() {
-            write_rdp_credential(profile, &password)?;
+        if password.is_empty() {
+            None
+        } else {
+            Some(crypto::protect_rdp_password(&password)?)
         }
-    }
+    };
 
-    let rdp_path = write_rdp_file(profile)?;
+    let rdp_path = write_rdp_file(profile, rdp_password.as_deref())?;
     Command::new("mstsc.exe")
         .arg(&rdp_path)
         .spawn()
@@ -29,40 +26,9 @@ pub fn launch(profile: &ConnectionProfile) -> Result<()> {
     Ok(())
 }
 
-fn write_rdp_credential(profile: &ConnectionProfile, password: &str) -> Result<()> {
-    let target = wide_null(&profile.credential_target());
-    let username = wide_null(&profile.username);
-    let password: Vec<u16> = password.encode_utf16().collect();
-    let password_bytes = password
-        .len()
-        .checked_mul(size_of::<u16>())
-        .and_then(|len| u32::try_from(len).ok())
-        .context("password is too large")?;
-
-    // Remove stale credentials for the same TERMSRV target first. Old Domain Password
-    // entries can take precedence over the Generic credential that mstsc can consume.
-    unsafe {
-        let target_name = PCWSTR(target.as_ptr());
-        let _ = CredDeleteW(target_name, CRED_TYPE_GENERIC, None);
-        let _ = CredDeleteW(target_name, CRED_TYPE_DOMAIN_PASSWORD, None);
-    }
-
-    let credential = CREDENTIALW {
-        Type: CRED_TYPE_GENERIC,
-        TargetName: PWSTR(target.as_ptr().cast_mut()),
-        CredentialBlobSize: password_bytes,
-        CredentialBlob: password.as_ptr().cast::<u8>().cast_mut(),
-        Persist: CRED_PERSIST_LOCAL_MACHINE,
-        UserName: PWSTR(username.as_ptr().cast_mut()),
-        ..Default::default()
-    };
-    unsafe { CredWriteW(&credential, 0).context("CredWriteW failed")? };
-    Ok(())
-}
-
-fn write_rdp_file(profile: &ConnectionProfile) -> Result<PathBuf> {
+fn write_rdp_file(profile: &ConnectionProfile, rdp_password: Option<&str>) -> Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("mstsc-mgr-external-{}.rdp", profile.id));
-    let content = build_rdp_content(profile);
+    let content = build_rdp_content(profile, rdp_password);
     let mut bytes = Vec::with_capacity(content.len() * 2 + 2);
     bytes.extend_from_slice(&[0xff, 0xfe]);
     for unit in content.encode_utf16() {
@@ -72,9 +38,11 @@ fn write_rdp_file(profile: &ConnectionProfile) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn build_rdp_content(profile: &ConnectionProfile) -> String {
+fn build_rdp_content(profile: &ConnectionProfile, rdp_password: Option<&str>) -> String {
     let screen_mode = if profile.fullscreen { 2 } else { 1 };
-    format!(
+    let (domain, username) = split_domain_username(&profile.username);
+
+    let mut content = format!(
         concat!(
             "full address:s:{}\r\n",
             "username:s:{}\r\n",
@@ -84,16 +52,37 @@ fn build_rdp_content(profile: &ConnectionProfile) -> String {
             "authentication level:i:0\r\n",
             "enablecredsspsupport:i:1\r\n",
             "negotiate security layer:i:1\r\n",
+            "public mode:i:0\r\n",
             "autoreconnection enabled:i:1\r\n"
         ),
         profile.endpoint(),
-        profile.username,
+        username,
         screen_mode,
-    )
+    );
+
+    if let Some(domain) = domain {
+        content.push_str("domain:s:");
+        content.push_str(domain);
+        content.push_str("\r\n");
+    }
+
+    if let Some(password) = rdp_password.filter(|password| !password.is_empty()) {
+        content.push_str("password 51:b:");
+        content.push_str(password);
+        content.push_str("\r\n");
+    }
+
+    content
 }
 
-fn wide_null(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
+fn split_domain_username(username: &str) -> (Option<&str>, &str) {
+    if let Some((domain, user)) = username.split_once('\\')
+        && !domain.is_empty()
+        && !user.is_empty()
+    {
+        return (Some(domain), user);
+    }
+    (None, username)
 }
 
 #[cfg(test)]
@@ -113,14 +102,27 @@ mod tests {
     }
 
     #[test]
-    fn rdp_content_matches_compatibility_settings() {
-        let content = build_rdp_content(&profile());
+    fn rdp_content_matches_compatibility_settings_and_embeds_password() {
+        let content = build_rdp_content(&profile(), Some("010203AABB"));
         assert!(content.contains("full address:s:10.0.0.8:3390"));
-        assert!(content.contains("username:s:DOMAIN\\user"));
+        assert!(content.contains("username:s:user"));
+        assert!(content.contains("domain:s:DOMAIN"));
+        assert!(content.contains("password 51:b:010203AABB"));
         assert!(content.contains("authentication level:i:0"));
         assert!(content.contains("enablecredsspsupport:i:1"));
         assert!(content.contains("prompt for credentials:i:0"));
+        assert!(content.contains("public mode:i:0"));
         assert!(content.contains("screen mode id:i:2"));
         assert!(!content.contains("must-not-be-written"));
+    }
+
+    #[test]
+    fn username_without_domain_is_kept_as_is() {
+        let mut profile = profile();
+        profile.username = "local-user".to_string();
+        let content = build_rdp_content(&profile, None);
+        assert!(content.contains("username:s:local-user"));
+        assert!(!content.contains("domain:s:"));
+        assert!(!content.contains("password 51:b:"));
     }
 }

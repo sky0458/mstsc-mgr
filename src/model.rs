@@ -23,10 +23,6 @@ impl ConnectionProfile {
             format!("{}:{}", self.host, self.port)
         }
     }
-
-    pub fn credential_target(&self) -> String {
-        format!("TERMSRV/{}", self.host)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

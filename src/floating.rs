@@ -7,7 +7,10 @@ use gpui::{
 };
 use gpui_component::v_flex;
 use std::{
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -17,10 +20,11 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
             WindowsAndMessaging::{
-                FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, HWND_TOPMOST,
-                IsWindowVisible, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-                SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+                FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, HWND_NOTOPMOST,
+                HWND_TOPMOST, IsWindowVisible, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN,
+                SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE,
+                SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+                ShowWindow,
             },
         },
     },
@@ -39,7 +43,7 @@ const FLOATING_LIST_ROW_HEIGHT: f32 = 36.0;
 const FLOATING_MAX_TABS: usize = 9;
 const FLOATING_MENU_WIDTH: f32 = 180.0;
 const FLOATING_MENU_ITEM_HEIGHT: f32 = 32.0;
-const FLOATING_MENU_ITEM_COUNT: usize = 4;
+const FLOATING_MENU_ITEM_COUNT: usize = 5;
 const FLOATING_MENU_OUTER_PADDING: f32 = 8.0;
 const FLOATING_MENU_GAP_HEIGHT: f32 = 4.0;
 const FLOATING_MENU_GAP: i32 = 2;
@@ -50,6 +54,8 @@ const LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(350);
 const WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(700);
 const MENU_DISMISS_POLL_INTERVAL: Duration = Duration::from_millis(15);
 const POSITION_PERSIST_DELAY: Duration = Duration::from_millis(30);
+
+static FLOATING_BALL_TOPMOST: AtomicBool = AtomicBool::new(true);
 
 pub const FLOATING_MENU_WINDOW_TITLE: &str = "mstsc-mgr-floating-menu";
 
@@ -103,28 +109,67 @@ fn point_in_rect(point: POINT, rect: RECT) -> bool {
     point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
 }
 
+fn floating_ball_is_topmost() -> bool {
+    FLOATING_BALL_TOPMOST.load(Ordering::SeqCst)
+}
+
+fn floating_ball_z_order() -> HWND {
+    if floating_ball_is_topmost() {
+        HWND_TOPMOST
+    } else {
+        HWND_NOTOPMOST
+    }
+}
+
+fn apply_floating_ball_z_order(ball: HWND) -> Result<()> {
+    // SAFETY: ball is the application's own floating HWND. This call changes only Z-order and
+    // deliberately preserves size, position and activation state.
+    unsafe {
+        SetWindowPos(
+            ball,
+            Some(floating_ball_z_order()),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .context("SetWindowPos floating ball Z-order failed")?;
+    }
+    Ok(())
+}
+
+fn set_floating_ball_topmost(topmost: bool) -> Result<()> {
+    FLOATING_BALL_TOPMOST.store(topmost, Ordering::SeqCst);
+    let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
+    apply_floating_ball_z_order(ball)?;
+
+    // Force the transparent GPUI popup to submit a fresh visible surface immediately after the
+    // Z-order transition. This is intentionally user-triggered instead of a periodic repair loop.
+    // SAFETY: ball belongs to this process and remains alive; hide/show does not resize or move it.
+    unsafe {
+        let _ = ShowWindow(ball, SW_HIDE);
+        let _ = ShowWindow(ball, SW_SHOWNOACTIVATE);
+    }
+    apply_floating_ball_z_order(ball)?;
+    tracing::info!(topmost, "floating ball topmost mode changed and redrawn");
+    Ok(())
+}
+
 pub fn set_controller_visible(visible: bool) -> Result<()> {
     let ball = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)?;
-    // SAFETY: ball is the application's existing floating GPUI window. Only visibility and Z-order
-    // change here; size, native region and position are deliberately left untouched.
+    // SAFETY: ball is the application's existing floating GPUI window. Visibility changes here;
+    // size, native region and position are deliberately left untouched.
     unsafe {
         if visible {
             let _ = ShowWindow(ball, SW_SHOWNOACTIVATE);
-            SetWindowPos(
-                ball,
-                Some(HWND_TOPMOST),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOACTIVATE,
-            )
-            .context("SetWindowPos shown floating ball failed")?;
         } else {
             let _ = ShowWindow(ball, SW_HIDE);
         }
     }
-    if !visible {
+    if visible {
+        apply_floating_ball_z_order(ball)?;
+    } else {
         let _ = platform::set_floating_list_visible(false);
         let _ = set_context_menu_visible(false);
     }
@@ -389,7 +434,7 @@ fn restore_floating_ball_position(state: &Arc<RwLock<AppState>>) -> Result<()> {
     unsafe {
         SetWindowPos(
             ball,
-            Some(HWND_TOPMOST),
+            Some(floating_ball_z_order()),
             x,
             y,
             0,
@@ -550,6 +595,11 @@ impl Render for FloatingBall {
             .on_mouse_up(MouseButton::Left, move |_, _, _| {
                 persist_current_floating_position_after_drag(Arc::clone(&release_state));
                 let _ = set_context_menu_visible(false);
+                if let Ok(ball) = find_floating_window(platform::FLOATING_BALL_WINDOW_TITLE)
+                    && let Err(error) = apply_floating_ball_z_order(ball)
+                {
+                    tracing::warn!(%error, "failed to restore floating-ball topmost mode after drag");
+                }
                 match platform::handle_floating_ball_click() {
                     Ok(()) => {
                         if let Err(error) = platform_actions::repair_main_window_frame() {
@@ -710,7 +760,7 @@ impl FloatingContextMenu {
 }
 
 impl Render for FloatingContextMenu {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(FLOATING_MENU_WINDOW_TITLE);
         if !self.native_ready {
             window.resize(size(px(FLOATING_MENU_WIDTH), px(floating_menu_height())));
@@ -719,6 +769,11 @@ impl Render for FloatingContextMenu {
             }
         }
         let close_state = Arc::clone(&self.state);
+        let topmost_label = if floating_ball_is_topmost() {
+            "取消置顶"
+        } else {
+            "置顶"
+        };
 
         v_flex()
             .size_full()
@@ -753,6 +808,31 @@ impl Render for FloatingContextMenu {
                         }
                     })
                     .child("Show main window"),
+            )
+            .child(
+                div()
+                    .id("floating-menu-topmost-toggle")
+                    .w_full()
+                    .h(px(FLOATING_MENU_ITEM_HEIGHT))
+                    .px_3()
+                    .rounded_md()
+                    .bg(rgb(0x0f172a))
+                    .text_sm()
+                    .text_color(rgb(TEXT))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        let _ = set_context_menu_visible(false);
+                        let next = !floating_ball_is_topmost();
+                        match set_floating_ball_topmost(next) {
+                            Ok(()) => cx.notify(),
+                            Err(error) => {
+                                tracing::error!(%error, topmost = next, "failed to toggle floating-ball topmost mode");
+                            }
+                        }
+                    }))
+                    .child(topmost_label),
             )
             .child(
                 div()

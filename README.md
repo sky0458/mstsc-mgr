@@ -16,6 +16,7 @@ Only external MSTSC account management is included:
 - Save connection name, host/IP, port and username.
 - Save passwords encrypted with the current Windows user's DPAPI key.
 - Add, edit and delete saved connections.
+- The first saved connection is selected automatically when the app starts or the list is refreshed.
 - Double-click a connection or press **Connect** to launch the system `mstsc.exe`.
 - A per-connection temporary `.rdp` file is generated for every launch.
 - The saved password is decrypted only at launch time, then re-encrypted with Windows DPAPI over UTF-16LE bytes and embedded as the standard `password 51:b:<DPAPI hex>` RDP setting. The password is never written as plaintext.

@@ -19,10 +19,11 @@ pub fn launch(profile: &ConnectionProfile) -> Result<()> {
     };
 
     let rdp_path = write_rdp_file(profile, rdp_password.as_deref())?;
-    Command::new("mstsc.exe")
+    let child = Command::new("mstsc.exe")
         .arg(&rdp_path)
         .spawn()
         .with_context(|| format!("failed to launch mstsc.exe with {}", rdp_path.display()))?;
+    crate::session_titles::track(child, profile.session_title())?;
     Ok(())
 }
 
@@ -97,6 +98,7 @@ mod tests {
             port: 3390,
             username: "DOMAIN\\user".to_string(),
             protected_password: "must-not-be-written".to_string(),
+            credential_id: None,
             fullscreen: true,
         }
     }

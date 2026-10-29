@@ -8,10 +8,15 @@ pub fn load() -> Result<ConnectionStore> {
         return Ok(ConnectionStore::default());
     }
     let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
+    let mut store: ConnectionStore = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    store.validate()?;
+    store.format_version = 2;
+    Ok(store)
 }
 
 pub fn save(store: &ConnectionStore) -> Result<()> {
+    store.validate()?;
     let path = store_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)

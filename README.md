@@ -65,3 +65,23 @@ The branch CI rejects release binaries that import the graphics/browser compatib
 - `WebView2Loader.dll`
 
 The build artifact is named `mstsc-mgr-external-win2016-x64`.
+
+
+## Shared accounts
+
+Use **Shared accounts** to switch the list to saved accounts. **Add**, **Edit** and **Delete** operate on the displayed list. Create one shared account, return to **Connections**, and select it in each connection's **Account** dropdown. Updating its username/password once applies to all linked connections on their next launch. Connections can still use an individual account. Linking removes the connection's individual credential copy; blank passwords in the editor keep the existing saved password. Referenced accounts cannot be deleted.
+
+Shared passwords remain DPAPI-protected Base64 blobs in `connections.json`; they are decrypted only at launch. Existing version 0/1 files load and are saved as version 2. Back up the data before upgrading and use version 0.2.0 or newer to edit files containing shared accounts. The GPUI branch has a different data format and location; the branches do not exchange vault files.
+
+The connection editor is modal: its owner is disabled until the editor closes, capture is released on entry/exit, and native dialog keyboard navigation is supported. The native title bar retains normal Windows dragging. This branch has no floating controller, so the GPUI floating-icon fix does not apply here.
+
+MSTSC main windows launched by this tool receive best-effort `saved name (host[:port])` titles. The title monitor stops when the launched process exits, does not touch other sessions or credential dialogs, and uses bounded messages to avoid waiting indefinitely on hung clients. Elevated clients or process handoff may prevent renaming; the fullscreen connection bar may still display MSTSC's own label.
+
+## Development Log
+
+### version 0.2.0 2026-10-29 22:43:32
+
+- Added named shared accounts with DPAPI-protected passwords and connection references; account updates apply to every linked connection on its next launch. Preserved reading existing data and individual connection credentials, and blocked deletion of referenced accounts.
+- Added shared-account management and selection using standard Win32 controls, preserving the Server 2016 API/runtime dependency boundary.
+- Fixed editor ownership, capture cleanup, keyboard navigation, message-loop shutdown and data lifetime so competing editors cannot interfere with native dialog dragging. Failed saves do not replace the in-memory store.
+- Added best-effort saved-name/host titles for only tool-launched MSTSC main windows, with process lifetime tracking and bounded window messages.

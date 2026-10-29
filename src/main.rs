@@ -5,9 +5,11 @@
 #[cfg(windows)]
 mod crypto;
 #[cfg(windows)]
-mod model;
+use mstsc_mgr_external::model;
 #[cfg(windows)]
 mod mstsc;
+#[cfg(windows)]
+mod session_titles;
 #[cfg(windows)]
 mod storage;
 #[cfg(windows)]

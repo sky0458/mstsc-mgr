@@ -1,6 +1,6 @@
 use crate::{
     crypto,
-    model::{ConnectionProfile, ConnectionStore},
+    model::{ConnectionProfile, ConnectionStore, SharedCredential},
     mstsc, storage,
 };
 use anyhow::{Context, Result, bail};
@@ -10,19 +10,23 @@ use windows::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
-            CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-            DispatchMessageW, ES_AUTOHSCROLL, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
-            GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW, LB_ADDSTRING, LB_ERR,
-            LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL, LBN_DBLCLK, LBS_NOTIFY, LoadCursorW,
-            MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW, PostQuitMessage,
-            RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
-            SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-            WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE, WNDCLASSW, WS_BORDER,
-            WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX,
-            WS_OVERLAPPED, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
-            WS_VSCROLL,
+        UI::{
+            Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture},
+            WindowsAndMessaging::{
+                BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
+                CB_ADDSTRING, CB_GETCURSEL, CB_SETCURSEL, CBN_SELCHANGE, CBS_DROPDOWNLIST,
+                CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
+                DispatchMessageW, ES_AUTOHSCROLL, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
+                GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW, IsDialogMessageW, IsWindow,
+                LB_ADDSTRING, LB_ERR, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL, LBN_DBLCLK,
+                LBS_NOTIFY, LoadCursorW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MSG, MessageBoxW,
+                PostQuitMessage, RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow,
+                SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_NCCREATE,
+                WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
+                WS_EX_DLGMODALFRAME, WS_OVERLAPPED, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP,
+                WS_VISIBLE, WS_VSCROLL,
+            },
         },
     },
     core::{HSTRING, PCWSTR, w},
@@ -36,6 +40,7 @@ const ID_EDIT: i32 = 102;
 const ID_DELETE: i32 = 103;
 const ID_CONNECT: i32 = 104;
 const ID_OPEN_DATA: i32 = 105;
+const ID_ACCOUNTS: i32 = 106;
 
 const ID_NAME: i32 = 201;
 const ID_HOST: i32 = 202;
@@ -43,8 +48,9 @@ const ID_PORT: i32 = 203;
 const ID_USERNAME: i32 = 204;
 const ID_PASSWORD: i32 = 205;
 const ID_FULLSCREEN: i32 = 206;
-const ID_OK: i32 = 207;
-const ID_CANCEL: i32 = 208;
+const ID_OK: i32 = 1;
+const ID_CANCEL: i32 = 2;
+const ID_CREDENTIAL: i32 = 209;
 
 const BUTTON_CHECKED: usize = 1;
 const COLOR_WINDOW_BRUSH: isize = 6;
@@ -57,6 +63,8 @@ struct AppState {
     store: ConnectionStore,
     list: HWND,
     status: HWND,
+    accounts_button: HWND,
+    editing_accounts: bool,
 }
 
 struct EditorData {
@@ -69,6 +77,9 @@ struct EditorData {
     username: HWND,
     password: HWND,
     fullscreen: HWND,
+    credential: HWND,
+    credential_choices: Vec<(Option<u64>, String)>,
+    credential_mode: bool,
 }
 
 struct EditorResult {
@@ -77,18 +88,14 @@ struct EditorResult {
 }
 
 pub fn run() -> Result<()> {
-    let store = storage::load().unwrap_or_else(|error| {
-        show_error(
-            None,
-            &format!("Failed to load saved connections:\n{error:#}"),
-        );
-        ConnectionStore::default()
-    });
+    let store = storage::load()?;
     APP_STATE.with(|slot| {
         *slot.borrow_mut() = Some(AppState {
             store,
             list: HWND::default(),
             status: HWND::default(),
+            accounts_button: HWND::default(),
+            editing_accounts: false,
         });
     });
 
@@ -178,6 +185,14 @@ unsafe extern "system" fn main_window_proc(
                 ID_DELETE if notification == BN_CLICKED as i32 => delete_connection(hwnd),
                 ID_CONNECT if notification == BN_CLICKED as i32 => connect_selected(hwnd),
                 ID_OPEN_DATA if notification == BN_CLICKED as i32 => open_data_folder(hwnd),
+                ID_ACCOUNTS if notification == BN_CLICKED as i32 => {
+                    APP_STATE.with(|slot| {
+                        if let Some(state) = slot.borrow_mut().as_mut() {
+                            state.editing_accounts = !state.editing_accounts;
+                        }
+                    });
+                    refresh_list();
+                }
                 ID_LIST if notification == LBN_DBLCLK as i32 => connect_selected(hwnd),
                 _ => {}
             }
@@ -209,6 +224,7 @@ unsafe fn create_main_controls(parent: HWND) {
     let _ = create_button(parent, "Delete", 216, 350, 92, ID_DELETE);
     let _ = create_button(parent, "Connect", 316, 350, 112, ID_CONNECT);
     let _ = create_button(parent, "Data folder", 436, 350, 112, ID_OPEN_DATA);
+    let accounts_button = create_button(parent, "Shared accounts", 556, 350, 160, ID_ACCOUNTS);
     let status = create_control(
         WINDOW_EX_STYLE::default(),
         w!("STATIC"),
@@ -225,6 +241,7 @@ unsafe fn create_main_controls(parent: HWND) {
         if let Some(state) = slot.borrow_mut().as_mut() {
             state.list = list;
             state.status = status;
+            state.accounts_button = accounts_button;
         }
     });
 }
@@ -280,39 +297,60 @@ unsafe fn create_control(
 }
 
 unsafe fn send_message(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> LRESULT {
-    SendMessageW(
-        hwnd,
-        message,
-        Some(WPARAM(wparam)),
-        Some(LPARAM(lparam)),
-    )
+    SendMessageW(hwnd, message, Some(WPARAM(wparam)), Some(LPARAM(lparam)))
 }
 
 fn refresh_list() {
-    let count = APP_STATE.with(|slot| {
+    let status = APP_STATE.with(|slot| {
         let state_ref = slot.borrow();
         let Some(state) = state_ref.as_ref() else {
-            return 0;
+            return String::new();
         };
-        unsafe {
-            send_message(state.list, LB_RESETCONTENT, 0, 0);
-            for item in &state.store.connections {
-                let user = if item.username.trim().is_empty() {
-                    "<prompt>"
-                } else {
-                    item.username.as_str()
-                };
-                let line = format!("{}    {}    {}", item.name, item.endpoint(), user);
-                let wide = wide_null(&line);
-                send_message(state.list, LB_ADDSTRING, 0, wide.as_ptr() as isize);
+        let mut lines = Vec::new();
+        if state.editing_accounts {
+            for item in &state.store.credentials {
+                lines.push(format!("{}    {}", item.name, item.username));
             }
-            if !state.store.connections.is_empty() {
-                send_message(state.list, LB_SETCURSEL, 0, 0);
+        } else {
+            for item in &state.store.connections {
+                let user = item
+                    .credential_id
+                    .and_then(|id| state.store.credentials.iter().find(|item| item.id == id))
+                    .map(|item| format!("{} (shared: {})", item.username, item.name))
+                    .unwrap_or_else(|| item.username.clone());
+                lines.push(format!("{}    {}    {}", item.name, item.endpoint(), user));
             }
         }
-        state.store.connections.len()
+        // SAFETY: these controls belong to this thread; SendMessageW consumes the strings synchronously.
+        unsafe {
+            send_message(state.list, LB_RESETCONTENT, 0, 0);
+            for line in &lines {
+                let wide = wide_null(line);
+                send_message(state.list, LB_ADDSTRING, 0, wide.as_ptr() as isize);
+            }
+            if !lines.is_empty() {
+                send_message(state.list, LB_SETCURSEL, 0, 0);
+            }
+            let _ = SetWindowTextW(
+                state.accounts_button,
+                &HSTRING::from(if state.editing_accounts {
+                    "Connections"
+                } else {
+                    "Shared accounts"
+                }),
+            );
+        }
+        format!(
+            "{} saved {}",
+            lines.len(),
+            if state.editing_accounts {
+                "shared account(s) — edit once for all linked connections"
+            } else {
+                "connection(s)"
+            }
+        )
     });
-    set_status(&format!("{count} saved connection(s)"));
+    set_status(&status);
 }
 
 fn selected_index() -> Option<usize> {
@@ -328,99 +366,172 @@ fn selected_index() -> Option<usize> {
     })
 }
 
+fn update_store(parent: HWND, update: impl FnOnce(&mut ConnectionStore) -> Result<()>) {
+    let result: Result<()> = APP_STATE.with(|slot| {
+        let mut state_ref = slot.borrow_mut();
+        let state = state_ref
+            .as_mut()
+            .context("application state unavailable")?;
+        let mut next = state.store.clone();
+        update(&mut next)?;
+        storage::save(&next)?;
+        state.store = next;
+        Ok(())
+    });
+    // Drop the RefCell borrow before entering a nested MessageBox message loop.
+    match result {
+        Ok(()) => refresh_list(),
+        Err(error) => show_error(Some(parent), &format!("Failed to save:\n{error:#}")),
+    }
+}
+
+fn editing_accounts() -> bool {
+    APP_STATE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|state| state.editing_accounts)
+    })
+}
+
 fn add_connection(parent: HWND) {
+    let accounts = editing_accounts();
     let next_id = APP_STATE.with(|slot| {
         slot.borrow()
             .as_ref()
-            .map(|state| state.store.next_id())
+            .map(|state| {
+                if accounts {
+                    state.store.next_credential_id()
+                } else {
+                    state.store.next_id()
+                }
+            })
             .unwrap_or(1)
     });
-    if let Some(result) = show_editor(parent, None, next_id) {
-        APP_STATE.with(|slot| {
-            let mut state_ref = slot.borrow_mut();
-            if let Some(state) = state_ref.as_mut() {
-                state.store.connections.push(result.profile);
-                if let Err(error) = storage::save(&state.store) {
-                    show_error(
-                        Some(parent),
-                        &format!("Failed to save connection:\n{error:#}"),
-                    );
-                }
+    if let Some(result) = show_editor(parent, None, next_id, accounts) {
+        update_store(parent, move |store| {
+            if accounts {
+                store.credentials.push(SharedCredential {
+                    id: result.profile.id,
+                    name: result.profile.name,
+                    username: result.profile.username,
+                    protected_password: result.profile.protected_password,
+                });
+            } else {
+                store.connections.push(result.profile);
             }
+            Ok(())
         });
-        refresh_list();
     }
 }
 
 fn edit_connection(parent: HWND) {
     let Some(index) = selected_index() else {
-        show_info(Some(parent), "Select a connection first.");
+        show_info(Some(parent), "Select an item first.");
         return;
     };
+    let accounts = editing_accounts();
     let original = APP_STATE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .and_then(|state| state.store.connections.get(index).cloned())
+        slot.borrow().as_ref().and_then(|state| {
+            if accounts {
+                state
+                    .store
+                    .credentials
+                    .get(index)
+                    .map(|item| ConnectionProfile {
+                        id: item.id,
+                        name: item.name.clone(),
+                        host: String::new(),
+                        port: 3389,
+                        username: item.username.clone(),
+                        protected_password: item.protected_password.clone(),
+                        credential_id: None,
+                        fullscreen: false,
+                    })
+            } else {
+                state.store.connections.get(index).cloned()
+            }
+        })
     });
     let Some(original) = original else {
         return;
     };
-    if let Some(result) = show_editor(parent, Some(original.clone()), original.id) {
-        APP_STATE.with(|slot| {
-            let mut state_ref = slot.borrow_mut();
-            if let Some(state) = state_ref.as_mut()
-                && let Some(target) = state.store.connections.get_mut(index)
-            {
-                *target = result.profile;
-                if let Err(error) = storage::save(&state.store) {
-                    show_error(
-                        Some(parent),
-                        &format!("Failed to save connection:\n{error:#}"),
-                    );
-                }
+    if let Some(result) = show_editor(parent, Some(original.clone()), original.id, accounts) {
+        update_store(parent, move |store| {
+            if accounts {
+                let item = store
+                    .credentials
+                    .iter_mut()
+                    .find(|item| item.id == original.id)
+                    .context("shared account no longer exists")?;
+                *item = SharedCredential {
+                    id: result.profile.id,
+                    name: result.profile.name,
+                    username: result.profile.username,
+                    protected_password: result.profile.protected_password,
+                };
+            } else {
+                let item = store
+                    .connections
+                    .iter_mut()
+                    .find(|item| item.id == original.id)
+                    .context("connection no longer exists")?;
+                *item = result.profile;
             }
+            Ok(())
         });
-        refresh_list();
     }
 }
 
 fn delete_connection(parent: HWND) {
     let Some(index) = selected_index() else {
-        show_info(Some(parent), "Select a connection first.");
+        show_info(Some(parent), "Select an item first.");
         return;
     };
-    APP_STATE.with(|slot| {
-        let mut state_ref = slot.borrow_mut();
-        if let Some(state) = state_ref.as_mut()
-            && index < state.store.connections.len()
-        {
-            state.store.connections.remove(index);
-            if let Err(error) = storage::save(&state.store) {
-                show_error(
-                    Some(parent),
-                    &format!("Failed to save connection:\n{error:#}"),
-                );
-            }
+    let accounts = editing_accounts();
+    update_store(parent, move |store| {
+        if accounts {
+            let id = store
+                .credentials
+                .get(index)
+                .context("shared account no longer exists")?
+                .id;
+            store.remove_credential(id)?;
+        } else if index < store.connections.len() {
+            store.connections.remove(index);
         }
+        Ok(())
     });
-    refresh_list();
 }
 
 fn connect_selected(parent: HWND) {
+    if editing_accounts() {
+        show_info(Some(parent), "Select Connections to open a remote session.");
+        return;
+    }
     let Some(index) = selected_index() else {
         show_info(Some(parent), "Select a connection first.");
         return;
     };
-    let profile = APP_STATE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .and_then(|state| state.store.connections.get(index).cloned())
-    });
-    let Some(profile) = profile else {
-        return;
-    };
-    match mstsc::launch(&profile) {
-        Ok(()) => set_status(&format!("Launched {}", profile.endpoint())),
+    let result = APP_STATE
+        .with(|slot| {
+            let state_ref = slot.borrow();
+            let state = state_ref
+                .as_ref()
+                .context("application state unavailable")?;
+            let id = state
+                .store
+                .connections
+                .get(index)
+                .context("connection no longer exists")?
+                .id;
+            state.store.resolve_profile(id)
+        })
+        .and_then(|profile| {
+            mstsc::launch(&profile)?;
+            Ok(profile.session_title())
+        });
+    match result {
+        Ok(title) => set_status(&format!("Launched {title}")),
         Err(error) => show_error(Some(parent), &format!("Failed to launch mstsc:\n{error:#}")),
     }
 }
@@ -458,8 +569,25 @@ fn set_status(text: &str) {
     });
 }
 
-fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Option<EditorResult> {
-    let data = Box::new(EditorData {
+fn show_editor(
+    parent: HWND,
+    original: Option<ConnectionProfile>,
+    id: u64,
+    credential_mode: bool,
+) -> Option<EditorResult> {
+    let mut choices = vec![(None, "Connection-specific account".to_string())];
+    APP_STATE.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            choices.extend(
+                state
+                    .store
+                    .credentials
+                    .iter()
+                    .map(|item| (Some(item.id), format!("{} — {}", item.name, item.username))),
+            );
+        }
+    });
+    let mut data = Box::new(EditorData {
         id,
         original,
         result: None,
@@ -469,45 +597,73 @@ fn show_editor(parent: HWND, original: Option<ConnectionProfile>, id: u64) -> Op
         username: HWND::default(),
         password: HWND::default(),
         fullscreen: HWND::default(),
+        credential: HWND::default(),
+        credential_choices: choices,
+        credential_mode,
     });
-    let raw = Box::into_raw(data);
-    let instance = unsafe { GetModuleHandleW(None).ok()? };
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WS_EX_DLGMODALFRAME,
-            EDITOR_CLASS,
-            w!("Connection"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            440,
-            350,
-            Some(parent),
-            None,
-            Some(HINSTANCE(instance.0)),
-            Some(raw.cast()),
-        )
-        .ok()?
-    };
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = SetForegroundWindow(hwnd);
-    }
-
-    let mut message = MSG::default();
-    unsafe {
-        while GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
-            if !GetMessageW(&mut message, None, 0, 0).as_bool() {
-                break;
+    // SAFETY: the owned Box stays alive through creation, the modal message loop and destruction.
+    // The main window is disabled to prevent nested editors from competing for capture/focus.
+    let result = unsafe {
+        (|| -> Result<()> {
+            let instance = GetModuleHandleW(None).context("GetModuleHandleW failed")?;
+            let _ = ReleaseCapture();
+            let title = HSTRING::from(if credential_mode {
+                "Shared account"
+            } else {
+                "Connection"
+            });
+            let hwnd = CreateWindowExW(
+                WS_EX_DLGMODALFRAME,
+                EDITOR_CLASS,
+                &title,
+                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                480,
+                if credential_mode { 320 } else { 420 },
+                Some(parent),
+                None,
+                Some(HINSTANCE(instance.0)),
+                Some((&mut *data as *mut EditorData).cast()),
+            )
+            .context("failed to create editor")?;
+            let _ = EnableWindow(parent, false);
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+            let mut message = MSG::default();
+            let mut loop_failed = false;
+            while IsWindow(Some(hwnd)).as_bool() {
+                let received = GetMessageW(&mut message, None, 0, 0).0;
+                if received <= 0 {
+                    if received == 0 {
+                        PostQuitMessage(message.wParam.0 as i32);
+                    } else {
+                        loop_failed = true;
+                    }
+                    break;
+                }
+                if !IsDialogMessageW(hwnd, &message).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
             }
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-        let _ = SetForegroundWindow(parent);
+            if IsWindow(Some(hwnd)).as_bool() {
+                let _ = DestroyWindow(hwnd);
+            }
+            let _ = ReleaseCapture();
+            let _ = EnableWindow(parent, true);
+            let _ = SetForegroundWindow(parent);
+            if loop_failed {
+                bail!("editor message loop failed");
+            }
+            Ok(())
+        })()
+    };
+    if let Err(error) = result {
+        show_error(Some(parent), &format!("Unable to open editor:\n{error:#}"));
+        return None;
     }
-
-    let data = unsafe { Box::from_raw(raw) };
-    let mut result = data.result;
+    let mut result = data.result.take();
     if let Some(result_ref) = result.as_mut()
         && let Some(password) = result_ref.password_changed_to.take()
     {
@@ -544,6 +700,9 @@ unsafe extern "system" fn editor_window_proc(
         WM_COMMAND => {
             let id = low_word(wparam.0) as i32;
             let notification = high_word(wparam.0) as i32;
+            if id == ID_CREDENTIAL && notification == CBN_SELCHANGE as i32 {
+                update_credential_controls(hwnd);
+            }
             if notification == BN_CLICKED as i32 {
                 match id {
                     ID_OK => save_editor(hwnd),
@@ -555,6 +714,10 @@ unsafe extern "system" fn editor_window_proc(
                 }
             }
             LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            clear_editor_userdata(hwnd);
+            DefWindowProcW(hwnd, message, wparam, lparam)
         }
         WM_CLOSE => {
             clear_editor_userdata(hwnd);
@@ -571,60 +734,113 @@ unsafe fn create_editor_controls(parent: HWND) {
     };
     let initial = data.original.clone();
     let name = initial.as_ref().map(|p| p.name.as_str()).unwrap_or("");
-    let host = initial.as_ref().map(|p| p.host.as_str()).unwrap_or("");
-    let port = initial
-        .as_ref()
-        .map(|p| p.port.to_string())
-        .unwrap_or_else(|| "3389".to_string());
     let username = initial.as_ref().map(|p| p.username.as_str()).unwrap_or("");
-
     create_label(parent, "Name", 18, 22, 110);
-    data.name = create_edit(parent, name, 136, 18, 270, ID_NAME, false);
-    create_label(parent, "Host / IP", 18, 62, 110);
-    data.host = create_edit(parent, host, 136, 58, 270, ID_HOST, false);
-    create_label(parent, "Port", 18, 102, 110);
-    data.port = create_edit(parent, &port, 136, 98, 100, ID_PORT, false);
-    create_label(parent, "Username", 18, 142, 110);
-    data.username = create_edit(parent, username, 136, 138, 270, ID_USERNAME, false);
-    create_label(parent, "Password", 18, 182, 110);
-    data.password = create_edit(parent, "", 136, 178, 270, ID_PASSWORD, true);
-    if initial.is_some() {
+    data.name = create_edit(parent, name, 136, 18, 306, ID_NAME, false);
+    let (user_y, password_y, button_y) = if data.credential_mode {
+        (62, 102, 218)
+    } else {
+        let host = initial.as_ref().map(|p| p.host.as_str()).unwrap_or("");
+        let port = initial
+            .as_ref()
+            .map(|p| p.port.to_string())
+            .unwrap_or_else(|| "3389".into());
+        create_label(parent, "Host / IP", 18, 62, 110);
+        data.host = create_edit(parent, host, 136, 58, 306, ID_HOST, false);
+        create_label(parent, "Port", 18, 102, 110);
+        data.port = create_edit(parent, &port, 136, 98, 100, ID_PORT, false);
+        create_label(parent, "Account", 18, 142, 110);
+        data.credential = create_control(
+            WINDOW_EX_STYLE::default(),
+            w!("COMBOBOX"),
+            "",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            136,
+            138,
+            306,
+            200,
+            parent,
+            ID_CREDENTIAL,
+        );
+        let selected = initial.as_ref().and_then(|item| item.credential_id);
+        for (index, (id, label)) in data.credential_choices.iter().enumerate() {
+            let wide = wide_null(label);
+            send_message(data.credential, CB_ADDSTRING, 0, wide.as_ptr() as isize);
+            if *id == selected {
+                send_message(data.credential, CB_SETCURSEL, index, 0);
+            }
+        }
+        (182, 222, 328)
+    };
+    create_label(parent, "Username", 18, user_y, 110);
+    data.username = create_edit(parent, username, 136, user_y - 4, 306, ID_USERNAME, false);
+    create_label(parent, "Password", 18, password_y, 110);
+    data.password = create_edit(parent, "", 136, password_y - 4, 306, ID_PASSWORD, true);
+    create_label(
+        parent,
+        "Blank keeps existing password",
+        136,
+        password_y + 28,
+        306,
+    );
+    if !data.credential_mode {
+        data.fullscreen = create_control(
+            WINDOW_EX_STYLE::default(),
+            w!("BUTTON"),
+            "Full screen (/f)",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            136,
+            286,
+            240,
+            24,
+            parent,
+            ID_FULLSCREEN,
+        );
+        if initial.as_ref().is_some_and(|p| p.fullscreen) {
+            send_message(data.fullscreen, BM_SETCHECK, BUTTON_CHECKED, 0);
+        }
+    } else {
         create_label(
             parent,
-            "Leave password blank to keep existing",
-            136,
-            209,
-            270,
+            "Used by all linked connections on next connect",
+            18,
+            172,
+            430,
         );
-    }
-    data.fullscreen = create_control(
-        WINDOW_EX_STYLE::default(),
-        w!("BUTTON"),
-        "Full screen (/f)",
-        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
-        136,
-        232,
-        180,
-        24,
-        parent,
-        ID_FULLSCREEN,
-    );
-    if initial.as_ref().is_some_and(|p| p.fullscreen) {
-        send_message(data.fullscreen, BM_SETCHECK, BUTTON_CHECKED, 0);
     }
     let _ = create_control(
         WINDOW_EX_STYLE::default(),
         w!("BUTTON"),
         "Save",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-        226,
-        274,
+        262,
+        button_y,
         86,
         30,
         parent,
         ID_OK,
     );
-    let _ = create_button(parent, "Cancel", 320, 274, 86, ID_CANCEL);
+    let _ = create_button(parent, "Cancel", 356, button_y, 86, ID_CANCEL);
+    update_credential_controls(parent);
+}
+
+unsafe fn selected_credential(data: &EditorData) -> Option<u64> {
+    if data.credential_mode {
+        return None;
+    }
+    let index = send_message(data.credential, CB_GETCURSEL, 0, 0).0;
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| data.credential_choices.get(index))
+        .and_then(|item| item.0)
+}
+
+unsafe fn update_credential_controls(hwnd: HWND) {
+    if let Some(data) = editor_data_mut(hwnd) {
+        let editable = data.credential_mode || selected_credential(data).is_none();
+        let _ = EnableWindow(data.username, editable);
+        let _ = EnableWindow(data.password, editable);
+    }
 }
 
 unsafe fn create_label(parent: HWND, text: &str, x: i32, y: i32, width: i32) {
@@ -674,14 +890,30 @@ unsafe fn save_editor(hwnd: HWND) {
         return;
     };
     let name = get_text(data.name).trim().to_string();
-    let host = get_text(data.host).trim().to_string();
-    let port_text = get_text(data.port);
+    let host = if data.credential_mode {
+        String::new()
+    } else {
+        get_text(data.host).trim().to_string()
+    };
+    let port_text = if data.credential_mode {
+        "3389".to_string()
+    } else {
+        get_text(data.port)
+    };
+    let credential_id = selected_credential(data);
     let username = get_text(data.username).trim().to_string();
-    let password = get_text(data.password);
-    let fullscreen = send_message(data.fullscreen, BM_GETCHECK, 0, 0).0
-        == BUTTON_CHECKED as isize;
+    let password = if credential_id.is_none() {
+        get_text(data.password)
+    } else {
+        String::new()
+    };
+    let fullscreen = send_message(data.fullscreen, BM_GETCHECK, 0, 0).0 == BUTTON_CHECKED as isize;
 
-    if host.is_empty() {
+    if data.credential_mode && (name.is_empty() || username.is_empty()) {
+        show_error(Some(hwnd), "Account name and username are required.");
+        return;
+    }
+    if !data.credential_mode && host.is_empty() {
         show_error(Some(hwnd), "Host / IP is required.");
         return;
     }
@@ -704,8 +936,17 @@ unsafe fn save_editor(hwnd: HWND) {
             name: if name.is_empty() { host.clone() } else { name },
             host,
             port,
-            username,
-            protected_password,
+            username: if credential_id.is_none() {
+                username
+            } else {
+                String::new()
+            },
+            protected_password: if credential_id.is_none() {
+                protected_password
+            } else {
+                String::new()
+            },
+            credential_id,
             fullscreen,
         },
         password_changed_to: if password.is_empty() {

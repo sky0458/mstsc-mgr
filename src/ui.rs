@@ -1,25 +1,30 @@
 use crate::{
     config::{self, AppPaths},
-    domain::{AppSettings, KeepAliveInput, SavedConnection, VaultPayload},
+    domain::{AppSettings, KeepAliveInput, SavedConnection, SharedCredential, VaultPayload},
     platform::{self, RuntimeSettings, WindowSnapshot},
 };
 use gpui::{
-    App, AppContext, Context, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
-    Styled, Window, WindowBounds, WindowOptions, div, px, rgb, size,
+    App, AppContext, Context, DispatchPhase, IntoElement, MouseButton, MouseMoveEvent,
+    MouseUpEvent, ParentElement, PathPromptOptions, Pixels, Point, Render, SharedString, Styled,
+    Window, WindowBounds, WindowControlArea, WindowOptions, canvas, div, point, prelude::*, px,
+    rgb, size,
 };
 use gpui_component::{
-    Root, WindowExt,
+    IndexPath, Root, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
-    dialog::DialogButtonProps,
+    dialog::{Dialog, DialogButtonProps},
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement,
+    select::{Select, SelectItem, SelectState},
     slider::{Slider, SliderState},
     v_flex,
 };
 use std::{
+    cell::RefCell,
     path::PathBuf,
+    rc::Rc,
     sync::{Arc, RwLock},
 };
 
@@ -28,6 +33,51 @@ const PANEL: u32 = 0x172033;
 const TEXT: u32 = 0xe5e7eb;
 const MUTED: u32 = 0x94a3b8;
 const ACCENT: u32 = 0x38bdf8;
+
+#[derive(Clone)]
+struct CredentialChoice {
+    id: Option<u64>,
+    label: SharedString,
+}
+
+impl SelectItem for CredentialChoice {
+    type Value = Option<u64>;
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+}
+
+#[derive(Default)]
+struct DialogDrag {
+    offset: Point<Pixels>,
+    pointer: Option<Point<Pixels>>,
+}
+
+fn movable_dialog(
+    dialog: Dialog,
+    title: &'static str,
+    drag: Rc<RefCell<DialogDrag>>,
+    window: &Window,
+) -> Dialog {
+    let offset = drag.borrow().offset;
+    dialog
+        .ml(offset.x)
+        .margin_top(window.viewport_size().height / 10. + offset.y)
+        .title(
+            div()
+                .id("dialog-drag-title")
+                .w_full()
+                .cursor_move()
+                .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+                    drag.borrow_mut().pointer = Some(event.position);
+                    cx.stop_propagation();
+                })
+                .child(title),
+        )
+}
 
 pub struct AppState {
     pub paths: AppPaths,
@@ -41,8 +91,8 @@ impl AppState {
     pub fn load() -> anyhow::Result<Self> {
         let paths = AppPaths::discover()?;
         paths.ensure()?;
-        let settings = config::load_settings(&paths).unwrap_or_default();
-        let vault = config::load_vault(&paths).unwrap_or_default();
+        let settings = config::load_settings(&paths)?;
+        let vault = config::load_vault(&paths)?;
         Ok(Self {
             paths,
             runtime_settings: Arc::new(RwLock::new(settings.clone())),
@@ -56,6 +106,8 @@ impl AppState {
 pub struct ManagerView {
     state: Arc<RwLock<AppState>>,
     status: SharedString,
+    dialog_drag: Rc<RefCell<DialogDrag>>,
+    show_credentials: bool,
 }
 
 impl ManagerView {
@@ -63,6 +115,8 @@ impl ManagerView {
         Self {
             state,
             status: "Ready".into(),
+            dialog_drag: Rc::default(),
+            show_credentials: false,
         }
     }
 
@@ -98,8 +152,25 @@ impl ManagerView {
                 port: 3389,
                 username: String::new(),
                 password: String::new(),
+                credential_id: None,
                 mstsc_args: Vec::new(),
             });
+
+        let mut choices = vec![CredentialChoice {
+            id: None,
+            label: "Connection-specific account".into(),
+        }];
+        if let Ok(state) = self.state.read() {
+            choices.extend(state.vault.credentials.iter().map(|item| CredentialChoice {
+                id: Some(item.id),
+                label: format!("{} · {}", item.name, item.username).into(),
+            }));
+        }
+        let selected = choices
+            .iter()
+            .position(|item| item.id == existing.credential_id)
+            .map(|row| IndexPath::default().row(row));
+        let credential = cx.new(|cx| SelectState::new(choices, selected, window, cx));
 
         let name = cx.new(|cx| {
             InputState::new(window, cx)
@@ -135,101 +206,288 @@ impl ManagerView {
 
         let manager = cx.entity().clone();
         let state = Arc::clone(&self.state);
-        window.open_dialog(cx, move |dialog, _, _| {
+        *self.dialog_drag.borrow_mut() = DialogDrag::default();
+        let drag = Rc::clone(&self.dialog_drag);
+        window.open_dialog(cx, move |dialog, window, app| {
             let name = name.clone();
             let host = host.clone();
             let port = port.clone();
             let username = username.clone();
             let password = password.clone();
             let args = args.clone();
+            let credential = credential.clone();
+            let use_inline = credential
+                .read(app)
+                .selected_value()
+                .is_none_or(Option::is_none);
             let manager = manager.clone();
             let state = Arc::clone(&state);
-            dialog
-                .title(if edit_id.is_some() {
+            movable_dialog(
+                dialog,
+                if edit_id.is_some() {
                     "Edit connection"
                 } else {
                     "Add connection"
-                })
-                .confirm()
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Save")
-                        .cancel_text("Cancel"),
-                )
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child(field("Name", Input::new(&name)))
-                        .child(field("Host", Input::new(&host)))
-                        .child(field("Port", Input::new(&port)))
-                        .child(field("Username", Input::new(&username)))
-                        .child(field("Password", Input::new(&password)))
-                        .child(field("MSTSC arguments", Input::new(&args))),
-                )
-                .on_ok(move |_, _, app| {
-                    let name_value = name.read(app).value().to_string();
-                    let host_value = host.read(app).value().to_string();
-                    let port_value = port.read(app).value().to_string();
-                    let username_value = username.read(app).value().to_string();
-                    let password_value = password.read(app).value().to_string();
-                    let args_value = args.read(app).value().to_string();
-                    if host_value.trim().is_empty() {
-                        manager.update(app, |view, cx| view.set_status("Host is required", cx));
-                        return false;
-                    }
-                    let Ok(port_value) = port_value.trim().parse::<u16>() else {
-                        manager.update(app, |view, cx| view.set_status("Port must be 1-65535", cx));
-                        return false;
-                    };
-                    let save_result = state
-                        .write()
-                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                        .and_then(|mut app_state| {
-                            let id = edit_id.unwrap_or_else(|| app_state.vault.next_id());
-                            let item = SavedConnection {
-                                id,
-                                name: if name_value.trim().is_empty() {
-                                    host_value.clone()
-                                } else {
-                                    name_value.trim().to_string()
-                                },
-                                host: host_value.trim().to_string(),
-                                port: port_value,
-                                username: username_value,
-                                password: password_value,
-                                mstsc_args: args_value
-                                    .split_whitespace()
-                                    .map(ToOwned::to_owned)
-                                    .collect(),
-                            };
-                            if let Some(index) = app_state
-                                .vault
-                                .connections
-                                .iter()
-                                .position(|entry| entry.id == id)
-                            {
-                                app_state.vault.connections[index] = item;
+                },
+                Rc::clone(&drag),
+                window,
+            )
+            .confirm()
+            .button_props(
+                DialogButtonProps::default()
+                    .ok_text("Save")
+                    .cancel_text("Cancel"),
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child(field("Name", Input::new(&name)))
+                    .child(field("Host", Input::new(&host)))
+                    .child(field("Port", Input::new(&port)))
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child("Account")
+                            .child(Select::new(&credential)),
+                    )
+                    .when(use_inline, |this| {
+                        this.child(field("Username", Input::new(&username)))
+                            .child(field("Password", Input::new(&password)))
+                    })
+                    .when(!use_inline, |this| {
+                        this.child("Uses the latest username/password from Shared accounts.")
+                    })
+                    .child(field("MSTSC arguments", Input::new(&args))),
+            )
+            .on_ok(move |_, _, app| {
+                let name_value = name.read(app).value().to_string();
+                let host_value = host.read(app).value().to_string();
+                let port_value = port.read(app).value().to_string();
+                let username_value = username.read(app).value().to_string();
+                let password_value = password.read(app).value().to_string();
+                let args_value = args.read(app).value().to_string();
+                let credential_id = credential.read(app).selected_value().copied().flatten();
+                if host_value.trim().is_empty() {
+                    manager.update(app, |view, cx| view.set_status("Host is required", cx));
+                    return false;
+                }
+                let Some(port_value) = port_value
+                    .trim()
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|port| *port != 0)
+                else {
+                    manager.update(app, |view, cx| view.set_status("Port must be 1-65535", cx));
+                    return false;
+                };
+                let save_result = state
+                    .write()
+                    .map_err(|_| anyhow::anyhow!("state lock poisoned"))
+                    .and_then(|mut app_state| {
+                        let mut next = app_state.vault.clone();
+                        let id = edit_id.unwrap_or_else(|| app_state.vault.next_id());
+                        let item = SavedConnection {
+                            id,
+                            name: if name_value.trim().is_empty() {
+                                host_value.clone()
                             } else {
-                                app_state.vault.connections.push(item);
-                            }
-                            config::save_vault(&app_state.paths, &app_state.vault)
+                                name_value.trim().to_string()
+                            },
+                            host: host_value.trim().to_string(),
+                            port: port_value,
+                            username: if credential_id.is_none() {
+                                username_value
+                            } else {
+                                String::new()
+                            },
+                            password: if credential_id.is_none() {
+                                password_value
+                            } else {
+                                String::new()
+                            },
+                            credential_id,
+                            mstsc_args: args_value
+                                .split_whitespace()
+                                .map(ToOwned::to_owned)
+                                .collect(),
+                        };
+                        if let Some(index) =
+                            next.connections.iter().position(|entry| entry.id == id)
+                        {
+                            next.connections[index] = item;
+                        } else {
+                            next.connections.push(item);
+                        }
+                        config::save_vault(&app_state.paths, &next)?;
+                        app_state.vault = next;
+                        Ok(())
+                    });
+                match save_result {
+                    Ok(()) => {
+                        manager.update(app, |view, cx| {
+                            view.set_status("Connection saved securely", cx)
                         });
-                    match save_result {
-                        Ok(()) => {
-                            manager.update(app, |view, cx| {
-                                view.set_status("Connection saved securely", cx)
-                            });
-                            true
-                        }
-                        Err(error) => {
-                            manager.update(app, |view, cx| {
-                                view.set_status(format!("Save failed: {error:#}"), cx)
-                            });
-                            false
-                        }
+                        true
                     }
+                    Err(error) => {
+                        manager.update(app, |view, cx| {
+                            view.set_status(format!("Save failed: {error:#}"), cx)
+                        });
+                        false
+                    }
+                }
+            })
+        });
+    }
+
+    fn open_credential_editor(
+        &mut self,
+        edit_id: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing = self.state.read().ok().and_then(|state| {
+            state
+                .vault
+                .credentials
+                .iter()
+                .find(|item| Some(item.id) == edit_id)
+                .cloned()
+        });
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Account name")
+                .default_value(
+                    existing
+                        .as_ref()
+                        .map(|item| item.name.clone())
+                        .unwrap_or_default(),
+                )
+        });
+        let username = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("DOMAIN\\user or user")
+                .default_value(
+                    existing
+                        .as_ref()
+                        .map(|item| item.username.clone())
+                        .unwrap_or_default(),
+                )
+        });
+        let password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Password")
+                .masked(true)
+                .default_value(
+                    existing
+                        .as_ref()
+                        .map(|item| item.password.clone())
+                        .unwrap_or_default(),
+                )
+        });
+        let manager = cx.entity().clone();
+        let state = Arc::clone(&self.state);
+        *self.dialog_drag.borrow_mut() = DialogDrag::default();
+        let drag = Rc::clone(&self.dialog_drag);
+        window.open_dialog(cx, move |dialog, window, _| {
+            let name = name.clone();
+            let username = username.clone();
+            let password = password.clone();
+            let manager = manager.clone();
+            let state = Arc::clone(&state);
+            movable_dialog(dialog, "Shared account", Rc::clone(&drag), window)
+                .confirm()
+                .button_props(DialogButtonProps::default().ok_text("Save").cancel_text("Cancel"))
+                .child(v_flex().gap_3()
+                    .child(field("Account name", Input::new(&name)))
+                    .child(field("Username", Input::new(&username)))
+                    .child(field("Password", Input::new(&password)))
+                    .child("All connections using this account use the updated credentials on their next connection."))
+                .on_ok(move |_, _, app| {
+                    let name = name.read(app).value().trim().to_string();
+                    let username = username.read(app).value().trim().to_string();
+                    let password = password.read(app).value().to_string();
+                    let result = state.write().map_err(|_| anyhow::anyhow!("state lock poisoned"))
+                        .and_then(|mut state| {
+                            let mut next = state.vault.clone();
+                            let id = edit_id.unwrap_or_else(|| next.next_credential_id());
+                            let credential = SharedCredential { id, name, username, password };
+                            if let Some(item) = next.credentials.iter_mut().find(|item| item.id == id) {
+                                *item = credential;
+                            } else {
+                                next.credentials.push(credential);
+                            }
+                            config::save_vault(&state.paths, &next)?;
+                            state.vault = next;
+                            Ok(())
+                        });
+                    let saved = result.is_ok();
+                    manager.update(app, |view, cx| match result {
+                        Ok(()) => view.set_status("Shared account saved securely", cx),
+                        Err(error) => view.set_status(format!("Save failed: {error:#}"), cx),
+                    });
+                    saved
                 })
         });
+    }
+
+    fn credential_list(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let credentials = self
+            .state
+            .read()
+            .map(|state| state.vault.credentials.clone())
+            .unwrap_or_default();
+        let mut list = v_flex()
+            .gap_2()
+            .child("Shared accounts · update a password once for all linked connections");
+        for credential in credentials {
+            let id = credential.id;
+            list = list.child(
+                h_flex()
+                    .gap_3()
+                    .p_3()
+                    .bg(rgb(PANEL))
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .child(credential.name)
+                            .child(credential.username),
+                    )
+                    .child(
+                        Button::new(("edit-credential", id as usize))
+                            .label("Edit")
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.open_credential_editor(Some(id), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("delete-credential", id as usize))
+                            .danger()
+                            .label("Delete")
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                let result = view
+                                    .state
+                                    .write()
+                                    .map_err(|_| anyhow::anyhow!("state lock poisoned"))
+                                    .and_then(|mut state| {
+                                        let mut next = state.vault.clone();
+                                        next.remove_credential(id)?;
+                                        config::save_vault(&state.paths, &next)?;
+                                        state.vault = next;
+                                        Ok(())
+                                    });
+                                match result {
+                                    Ok(()) => view.set_status("Shared account deleted", cx),
+                                    Err(error) => {
+                                        view.set_status(format!("Delete failed: {error:#}"), cx)
+                                    }
+                                }
+                            })),
+                    ),
+            );
+        }
+        list
     }
 
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -254,7 +512,9 @@ impl ManagerView {
         let manager = cx.entity().clone();
         let state = Arc::clone(&self.state);
 
-        window.open_dialog(cx, move |dialog, _, _| {
+        *self.dialog_drag.borrow_mut() = DialogDrag::default();
+        let drag = Rc::clone(&self.dialog_drag);
+        window.open_dialog(cx, move |dialog, window, _| {
             let draft_for_float = Arc::clone(&draft);
             let draft_for_tabs = Arc::clone(&draft);
             let draft_for_hotkeys = Arc::clone(&draft);
@@ -270,8 +530,7 @@ impl ManagerView {
             let manager_for_ok = manager.clone();
             let current = draft.read().map(|v| v.clone()).unwrap_or_default();
 
-            dialog
-                .title("Settings")
+            movable_dialog(dialog, "Settings", Rc::clone(&drag), window)
                 .confirm()
                 .button_props(
                     DialogButtonProps::default()
@@ -446,8 +705,9 @@ impl ManagerView {
                     let mut app_state = state
                         .write()
                         .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
+                    config::save_vault(&app_state.paths, &vault)?;
                     app_state.vault = vault;
-                    config::save_vault(&app_state.paths, &app_state.vault)
+                    Ok(())
                 });
                 let _ = cx.update(|_, app| {
                     manager.update(app, |view, cx| match result {
@@ -516,76 +776,136 @@ impl Render for ManagerView {
         }
         for connection in connections {
             let id = connection.id;
-            let launch = connection.clone();
+            let account_label = connection
+                .credential_id
+                .and_then(|id| {
+                    self.state.read().ok().and_then(|state| {
+                        state
+                            .vault
+                            .credentials
+                            .iter()
+                            .find(|item| item.id == id)
+                            .map(|item| format!("{} · {}", item.name, item.username))
+                    })
+                })
+                .unwrap_or_else(|| connection.username.clone());
             let state_for_delete = Arc::clone(&self.state);
-            list = list.child(
-                h_flex()
-                    .p_3()
-                    .gap_3()
-                    .items_center()
-                    .rounded_lg()
-                    .bg(rgb(PANEL))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .child(
-                                div()
-                                    .text_color(rgb(TEXT))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(connection.name.clone()),
-                            )
-                            .child(div().text_sm().text_color(rgb(MUTED)).child(format!(
-                                "{}  ·  {}",
-                                connection.endpoint(),
-                                connection.username
-                            ))),
-                    )
-                    .child(
-                        Button::new(("connect", id as usize))
-                            .primary()
-                            .label("Connect")
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                match platform::launch_connection(&launch) {
-                                    Ok(()) => {
-                                        view.set_status(format!("Launching {}", launch.name), cx)
+            list =
+                list.child(
+                    h_flex()
+                        .p_3()
+                        .gap_3()
+                        .items_center()
+                        .rounded_lg()
+                        .bg(rgb(PANEL))
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .child(
+                                    div()
+                                        .text_color(rgb(TEXT))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(connection.name.clone()),
+                                )
+                                .child(div().text_sm().text_color(rgb(MUTED)).child(format!(
+                                    "{}  ·  {}",
+                                    connection.endpoint(),
+                                    account_label
+                                ))),
+                        )
+                        .child(
+                            Button::new(("connect", id as usize))
+                                .primary()
+                                .label("Connect")
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    let result = view
+                                        .state
+                                        .read()
+                                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))
+                                        .and_then(|state| state.vault.resolve_connection(id))
+                                        .and_then(|connection| {
+                                            platform::launch_connection(&connection)
+                                        });
+                                    match result {
+                                        Ok(()) => view.set_status("Launching connection", cx),
+                                        Err(error) => {
+                                            view.set_status(format!("Launch failed: {error:#}"), cx)
+                                        }
                                     }
-                                    Err(error) => {
-                                        view.set_status(format!("Launch failed: {error:#}"), cx)
-                                    }
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new(("edit", id as usize))
-                            .label("Edit")
-                            .on_click(cx.listener(move |view, _, window, cx| {
+                                })),
+                        )
+                        .child(Button::new(("edit", id as usize)).label("Edit").on_click(
+                            cx.listener(move |view, _, window, cx| {
                                 view.open_connection_editor(Some(id), window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(("delete", id as usize))
-                            .danger()
-                            .label("Delete")
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                let result = state_for_delete
-                                    .write()
-                                    .map_err(|_| anyhow::anyhow!("state lock poisoned"))
-                                    .and_then(|mut app_state| {
-                                        app_state.vault.connections.retain(|item| item.id != id);
-                                        config::save_vault(&app_state.paths, &app_state.vault)
-                                    });
-                                match result {
-                                    Ok(()) => view.set_status("Connection deleted", cx),
-                                    Err(error) => {
-                                        view.set_status(format!("Delete failed: {error:#}"), cx)
+                            }),
+                        ))
+                        .child(
+                            Button::new(("delete", id as usize))
+                                .danger()
+                                .label("Delete")
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    let result = state_for_delete
+                                        .write()
+                                        .map_err(|_| anyhow::anyhow!("state lock poisoned"))
+                                        .and_then(|mut app_state| {
+                                            let mut next = app_state.vault.clone();
+                                            next.connections.retain(|item| item.id != id);
+                                            config::save_vault(&app_state.paths, &next)?;
+                                            app_state.vault = next;
+                                            Ok(())
+                                        });
+                                    match result {
+                                        Ok(()) => view.set_status("Connection deleted", cx),
+                                        Err(error) => {
+                                            view.set_status(format!("Delete failed: {error:#}"), cx)
+                                        }
                                     }
-                                }
-                            })),
-                    ),
-            );
+                                })),
+                        ),
+                );
         }
 
+        if self.show_credentials {
+            list = self.credential_list(cx);
+        }
+        let drag_listeners = Rc::clone(&self.dialog_drag);
         div()
+            .child(
+                canvas(
+                    move |_, _, _| (),
+                    move |_, _, window, _| {
+                        let move_drag = Rc::clone(&drag_listeners);
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+                            if phase != DispatchPhase::Capture {
+                                return;
+                            }
+                            let mut drag = move_drag.borrow_mut();
+                            if event.pressed_button != Some(MouseButton::Left) {
+                                drag.pointer = None;
+                            }
+                            if let Some(previous) = drag.pointer {
+                                let viewport = window.viewport_size();
+                                let next = drag.offset + event.position - previous;
+                                let max_x = ((viewport.width - px(480.)) / 2. - px(8.)).max(px(0.));
+                                let min_y = px(8.) - viewport.height / 10.;
+                                let max_y = (viewport.height * 0.9 - px(80.)).max(min_y);
+                                drag.offset =
+                                    point(next.x.clamp(-max_x, max_x), next.y.clamp(min_y, max_y));
+                                drag.pointer = Some(event.position);
+                                window.refresh();
+                            }
+                        });
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
+                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                            {
+                                drag_listeners.borrow_mut().pointer = None;
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
             .size_full()
             .bg(rgb(BG))
             .text_color(rgb(TEXT))
@@ -600,6 +920,7 @@ impl Render for ManagerView {
                             .justify_between()
                             .child(
                                 v_flex()
+                                    .window_control_area(WindowControlArea::Drag)
                                     .child(
                                         div()
                                             .text_2xl()
@@ -616,9 +937,17 @@ impl Render for ManagerView {
                                     .child(
                                         Button::new("add")
                                             .primary()
-                                            .label("Add connection")
+                                            .label(if self.show_credentials {
+                                                "Add account"
+                                            } else {
+                                                "Add connection"
+                                            })
                                             .on_click(cx.listener(|view, _, window, cx| {
-                                                view.open_connection_editor(None, window, cx)
+                                                if view.show_credentials {
+                                                    view.open_credential_editor(None, window, cx)
+                                                } else {
+                                                    view.open_connection_editor(None, window, cx)
+                                                }
                                             })),
                                     )
                                     .child(Button::new("settings").label("Settings").on_click(
@@ -631,6 +960,18 @@ impl Render for ManagerView {
                     .child(
                         h_flex()
                             .gap_2()
+                            .child(
+                                Button::new("shared-accounts")
+                                    .label(if self.show_credentials {
+                                        "Connections"
+                                    } else {
+                                        "Shared accounts"
+                                    })
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.show_credentials = !view.show_credentials;
+                                        cx.notify();
+                                    })),
+                            )
                             .child(
                                 Button::new("import")
                                     .label("Import encrypted vault")

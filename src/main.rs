@@ -17,7 +17,12 @@ fn main() -> anyhow::Result<()> {
     };
     use std::sync::{Arc, RwLock};
 
-    let state = Arc::new(RwLock::new(AppState::load()?));
+    let loaded = AppState::load().inspect_err(|error| {
+        platform_actions::show_startup_error(&format!(
+            "Unable to load settings or vault:\n{error:#}"
+        ));
+    })?;
+    let state = Arc::new(RwLock::new(loaded));
     let log_path = state
         .read()
         .ok()

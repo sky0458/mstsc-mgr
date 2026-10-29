@@ -5,19 +5,16 @@ use std::{
     thread,
     time::Duration,
 };
-use windows::{
-    Win32::{
-        Foundation::{HWND, RECT},
-        UI::{
-            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON},
-            WindowsAndMessaging::{
-                FindWindowW, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, SM_CXSCREEN,
-                SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-                SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowPos,
-            },
+use windows::Win32::{
+    Foundation::{HWND, RECT},
+    UI::{
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON},
+        WindowsAndMessaging::{
+            GetSystemMetrics, GetWindowRect, HWND_TOPMOST, SM_CXSCREEN, SM_CXVIRTUALSCREEN,
+            SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+            SWP_NOSIZE, SetWindowPos,
         },
     },
-    core::HSTRING,
 };
 
 const STARTUP_SETTLE_DELAY: Duration = Duration::from_millis(250);
@@ -215,7 +212,5 @@ fn persist_position(state: &Arc<RwLock<AppState>>, x: i32, y: i32) -> Result<()>
 }
 
 fn find_floating_ball() -> Result<HWND> {
-    let title = HSTRING::from(platform::FLOATING_BALL_WINDOW_TITLE);
-    // SAFETY: FindWindowW only reads the supplied title and returns an OS-owned HWND.
-    unsafe { FindWindowW(None, &title).context("FindWindowW floating ball failed") }
+    crate::platform_native::find_window_by_title(platform::FLOATING_BALL_WINDOW_TITLE)
 }

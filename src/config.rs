@@ -2,7 +2,7 @@ use crate::{
     crypto,
     domain::{AppSettings, VaultPayload},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -56,14 +56,15 @@ pub fn load_vault(paths: &AppPaths) -> Result<VaultPayload> {
     let encrypted = fs::read(&paths.vault)
         .with_context(|| format!("failed to read {}", paths.vault.display()))?;
     let clear = crypto::unprotect(&encrypted).context("unable to decrypt local vault")?;
-    let vault: VaultPayload = serde_json::from_slice(&clear).context("invalid vault payload")?;
-    if vault.format_version != 1 {
-        bail!("unsupported vault format version {}", vault.format_version);
-    }
+    let mut vault: VaultPayload =
+        serde_json::from_slice(&clear).context("invalid vault payload")?;
+    vault.validate()?;
+    vault.format_version = 2;
     Ok(vault)
 }
 
 pub fn save_vault(paths: &AppPaths, vault: &VaultPayload) -> Result<()> {
+    vault.validate()?;
     paths.ensure()?;
     let clear = serde_json::to_vec(vault)?;
     let encrypted = crypto::protect(&clear).context("unable to encrypt local vault")?;
@@ -71,6 +72,7 @@ pub fn save_vault(paths: &AppPaths, vault: &VaultPayload) -> Result<()> {
 }
 
 pub fn export_vault(vault: &VaultPayload, destination: &Path) -> Result<()> {
+    vault.validate()?;
     let clear = serde_json::to_vec(vault)?;
     let encrypted = crypto::protect(&clear).context("unable to encrypt export")?;
     atomic_write(destination, &encrypted)
@@ -81,13 +83,10 @@ pub fn import_vault(source: &Path) -> Result<VaultPayload> {
         fs::read(source).with_context(|| format!("failed to read {}", source.display()))?;
     let clear = crypto::unprotect(&encrypted)
         .context("unable to decrypt import; v0.1 exports require the same Windows user profile")?;
-    let vault: VaultPayload = serde_json::from_slice(&clear).context("invalid imported vault")?;
-    if vault.format_version != 1 {
-        bail!(
-            "unsupported imported vault format version {}",
-            vault.format_version
-        );
-    }
+    let mut vault: VaultPayload =
+        serde_json::from_slice(&clear).context("invalid imported vault")?;
+    vault.validate()?;
+    vault.format_version = 2;
     Ok(vault)
 }
 

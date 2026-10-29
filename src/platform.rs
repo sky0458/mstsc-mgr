@@ -21,8 +21,8 @@ use windows::{
         System::{
             LibraryLoader::GetModuleHandleW,
             Threading::{
-                AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
-                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+                AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess,
+                PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
             },
         },
         UI::{
@@ -36,7 +36,7 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, BringWindowToTop, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-                DestroyMenu, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowW,
+                DestroyMenu, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowExW,
                 GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowRect,
                 GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HWND_MESSAGE,
                 HWND_TOPMOST, IDI_APPLICATION, IsWindowVisible, LoadIconW, MF_SEPARATOR, MF_STRING,
@@ -56,6 +56,7 @@ use windows::{
 pub const MAIN_WINDOW_TITLE: &str = "mstsc-mgr";
 pub const FLOATING_BALL_WINDOW_TITLE: &str = "mstsc-mgr-floating-ball";
 pub const FLOATING_LIST_WINDOW_TITLE: &str = "mstsc-mgr-floating-list";
+pub const FLOATING_MENU_WINDOW_TITLE: &str = "mstsc-mgr-floating-menu";
 
 const HOTKEY_NUM_BASE: i32 = 0x5100;
 const HOTKEY_PREVIOUS: i32 = 0x5200;
@@ -212,7 +213,7 @@ pub fn activate_window(hwnd: isize) -> Result<()> {
 }
 
 fn activate_hwnd(hwnd: HWND) -> Result<()> {
-    // SAFETY: hwnd is a top-level window handle discovered by EnumWindows/FindWindowW. Thread input
+    // SAFETY: hwnd is a top-level window handle discovered by EnumWindows. Thread input
     // queues are attached only for the duration of this activation attempt and detached below.
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
@@ -253,10 +254,24 @@ fn activate_hwnd(hwnd: HWND) -> Result<()> {
     }
 }
 
-fn find_window_by_title(title: &str) -> Result<HWND> {
+pub(crate) fn find_window_by_title(title: &str) -> Result<HWND> {
     let title = HSTRING::from(title);
-    // SAFETY: FindWindowW only reads the supplied UTF-16 title and returns a borrowed OS handle.
-    unsafe { FindWindowW(None, &title).context("FindWindowW failed") }
+    let mut previous = None;
+    loop {
+        // SAFETY: title is valid UTF-16 and previous, if present, is the last top-level search
+        // result. Check ownership so another running copy cannot receive our visibility/Z-order changes.
+        let hwnd = unsafe { FindWindowExW(None, previous, None, &title) }
+            .context("application window not found")?;
+        let mut pid = 0;
+        // SAFETY: hwnd is an OS-owned top-level search result; pid is writable output storage.
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == GetCurrentProcessId() {
+                return Ok(hwnd);
+            }
+        }
+        previous = Some(hwnd);
+    }
 }
 
 pub fn hide_main_window() -> Result<()> {
@@ -270,7 +285,44 @@ pub fn hide_main_window() -> Result<()> {
 
 pub fn show_main_window() -> Result<()> {
     let hwnd = find_window_by_title(MAIN_WINDOW_TITLE)?;
-    activate_hwnd(hwnd)
+    // SAFETY: this is our main HWND. Do not attach its input queue to the foreground MSTSC
+    // process: shared capture/focus state can interfere with subsequent native title-bar dragging.
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        if !SetForegroundWindow(hwnd).as_bool() {
+            bail!("SetForegroundWindow was rejected by Windows foreground policy");
+        }
+    }
+    Ok(())
+}
+
+/// Recover from fullscreen clients or other topmost windows changing Z-order. Never show hidden
+/// controls, steal focus, move/resize the ball, or rebuild its native elliptical region here.
+pub fn maintain_floating_topmost() -> Result<()> {
+    for title in [
+        FLOATING_BALL_WINDOW_TITLE,
+        FLOATING_LIST_WINDOW_TITLE,
+        FLOATING_MENU_WINDOW_TITLE,
+    ] {
+        let hwnd = find_window_by_title(title)?;
+        // SAFETY: these are the application's floating top-level HWNDs. We only promote visible
+        // windows, preserving activation and all geometry. List/menu are promoted after the ball.
+        unsafe {
+            if IsWindowVisible(hwnd).as_bool() {
+                SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .context("failed to maintain floating controller topmost state")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn handle_floating_ball_click() -> Result<()> {

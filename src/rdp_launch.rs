@@ -33,9 +33,10 @@ pub fn launch_connection(connection: &SavedConnection) -> Result<()> {
     for arg in sanitized_mstsc_args(connection, has_saved_credentials) {
         command.arg(arg);
     }
-    command
+    let child = command
         .spawn()
         .with_context(|| format!("failed to launch mstsc.exe with {}", rdp_path.display()))?;
+    crate::session_titles::track(child, connection.session_title())?;
     Ok(())
 }
 
@@ -52,6 +53,7 @@ fn refresh_rdp_credential(connection: &SavedConnection) -> Result<()> {
     // Clear both credential types before writing the current Generic TERMSRV credential. A stale
     // Domain Password entry for the same server can otherwise take precedence and make mstsc.exe
     // prompt again even though mstsc-mgr has a current saved password.
+    // SAFETY: target is NUL-terminated and remains alive during both synchronous deletion calls.
     unsafe {
         let target_name = PCWSTR(target.as_ptr());
         let _ = CredDeleteW(target_name, CRED_TYPE_GENERIC, None);
@@ -136,6 +138,7 @@ mod tests {
             port: 3390,
             username: "DOMAIN\\user".to_string(),
             password: "must-not-be-written".to_string(),
+            credential_id: None,
             mstsc_args: vec![
                 "/f".to_string(),
                 "/v:wrong-host".to_string(),

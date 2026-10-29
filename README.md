@@ -44,6 +44,17 @@ Portable diagnostic output is written beside the executable when enabled:
 
 When a saved username/password is present, mstsc-mgr deletes stale Generic and Domain Password credentials for `TERMSRV/<host>` and writes the current Generic credential through `CredWriteW`. It then launches `mstsc.exe` with a generated UTF-16 `.rdp` file containing only host, username and non-secret RDP options. The password is never written to that file. Saved-credential profiles use `prompt for credentials:i:0`, while profiles without a saved password keep prompting normally. Mainline Windows builds do **not** force the Server-2016 compatibility branch's `authentication level:i:0`; normal server-authentication policy remains under MSTSC/Windows control.
 
+## Shared accounts
+
+1. Open **Shared accounts**, choose **Add account**, and save an account name, username and password.
+2. In each connection editor, select that account under **Account**, then save. Selecting a shared account removes the connection's separate username/password copy. Existing connections keep their individual credentials until explicitly linked.
+3. Change the shared account password once; all linked connections use the current value on their next connection. Existing RDP sessions are not reauthenticated automatically.
+4. An account in use cannot be deleted. Switch its connections to another account or to a connection-specific account first.
+
+Local storage and encrypted exports use vault format v2, including shared accounts. Existing v1 vaults can be read/imported and are upgraded when saved. Keep a backup before upgrading; v2 exports require this version or newer and the same Windows user profile. Mainline and the independent Win2016 branch retain separate data files and do not share a file format.
+
+RDP window titles are best-effort: the tool labels the main RDP container only while the process it launched is alive. Elevated clients, clients handing the connection to an existing process, and the secure Windows desktop may restrict title/Z-order operations. A title update may not change MSTSC's fullscreen connection bar. These conditions do not alter host authentication or session discovery.
+
 ## Development
 
 See [`AGENTS.md`](AGENTS.md) before editing. The file defines module boundaries, Windows API constraints, secret-handling requirements and the mandatory README version log.
@@ -63,10 +74,18 @@ A SemVer tag must match `Cargo.toml` (`vX.Y.Z` ↔ `X.Y.Z`). `.github/workflows/
 
 Two release paths are supported:
 
-- Push a matching SemVer tag such as `v0.2.14`.
+- Push a matching SemVer tag such as `v0.3.0`.
 - Merge to `main` with a merge commit whose message starts with `release:`. The workflow resolves the Cargo version, creates/publishes the matching tag and GitHub Release from that exact `main` commit.
 
 ## Development Log
+
+### version 0.3.0 2026-10-29 22:43:32
+
+- Added named shared accounts in the encrypted vault. Connections reference an account instead of keeping copies of its username/password; editing a shared account applies to every linked connection on the next launch. Existing connection-specific credentials and v1 vault imports remain supported. Shared accounts cannot be deleted while referenced.
+- Added `Shared accounts` management and an account selector in the connection editor. Vault format v2 includes shared accounts in DPAPI-protected local storage and exports; load/import failures are surfaced instead of falling back to an empty vault.
+- Restored the visible floating controller to the topmost Z-order periodically without activation, geometry changes, or showing disabled/hidden windows. Showing the ball now preserves its saved position.
+- Made editor/settings dialogs draggable by their headings with bounds that keep the heading reachable. Added a native drag area to the main heading and stopped attaching the main window's input queue to external MSTSC processes during restoration.
+- Added best-effort `saved name (host[:port])` titles for main RDP windows in processes launched by this tool, reapplying the title if MSTSC changes it. Global session discovery and manually launched sessions remain unchanged.
 
 Entries are ordered newest to oldest.
 

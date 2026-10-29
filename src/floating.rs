@@ -11,20 +11,17 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use windows::{
-    Win32::{
-        Foundation::{HWND, POINT, RECT},
-        UI::{
-            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
-            WindowsAndMessaging::{
-                FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, HWND_TOPMOST,
-                IsWindowVisible, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-                SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
-            },
+use windows::Win32::{
+    Foundation::{HWND, POINT, RECT},
+    UI::{
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
+        WindowsAndMessaging::{
+            GetCursorPos, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, IsWindowVisible,
+            SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SetWindowPos, ShowWindow,
         },
     },
-    core::HSTRING,
 };
 
 const PANEL: u32 = 0x172033;
@@ -51,7 +48,7 @@ const WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(700);
 const MENU_DISMISS_POLL_INTERVAL: Duration = Duration::from_millis(15);
 const POSITION_PERSIST_DELAY: Duration = Duration::from_millis(30);
 
-pub const FLOATING_MENU_WINDOW_TITLE: &str = "mstsc-mgr-floating-menu";
+pub const FLOATING_MENU_WINDOW_TITLE: &str = crate::platform_native::FLOATING_MENU_WINDOW_TITLE;
 
 fn floating_list_height(window_count: usize) -> f32 {
     let visible_rows = window_count.clamp(1, FLOATING_MAX_TABS) as f32;
@@ -94,9 +91,7 @@ fn floating_enabled_from_state(state: &Arc<RwLock<AppState>>) -> bool {
 }
 
 fn find_floating_window(title: &str) -> Result<HWND> {
-    let title = HSTRING::from(title);
-    // SAFETY: FindWindowW only reads the supplied title and returns an OS-owned HWND.
-    unsafe { FindWindowW(None, &title).context("FindWindowW failed") }
+    crate::platform_native::find_window_by_title(title)
 }
 
 fn point_in_rect(point: POINT, rect: RECT) -> bool {
@@ -117,7 +112,7 @@ pub fn set_controller_visible(visible: bool) -> Result<()> {
                 0,
                 0,
                 0,
-                SWP_NOSIZE | SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
             .context("SetWindowPos shown floating ball failed")?;
         } else {
@@ -445,6 +440,7 @@ pub struct FloatingBall {
     native_ready: bool,
     opacity: f32,
     controller_visible: bool,
+    last_topmost_refresh: Instant,
 }
 
 impl FloatingBall {
@@ -482,6 +478,12 @@ impl FloatingBall {
                         }
 
                         let now = Instant::now();
+                        if controller_enabled && now.duration_since(view.last_topmost_refresh) >= WINDOW_REFRESH_INTERVAL {
+                            view.last_topmost_refresh = now;
+                            if let Err(error) = platform::maintain_floating_topmost() {
+                                tracing::warn!(%error, "floating controller topmost recovery failed");
+                            }
+                        }
                         if pointer_inside && controller_enabled {
                             view.last_pointer_inside = now;
                         }
@@ -514,6 +516,7 @@ impl FloatingBall {
             native_ready: false,
             opacity: initial_opacity,
             controller_visible: initial_visible,
+            last_topmost_refresh: Instant::now(),
         }
     }
 }

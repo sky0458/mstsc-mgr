@@ -5,19 +5,25 @@ use windows::Win32::{
     UI::{
         Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture},
         WindowsAndMessaging::{
-            BringWindowToTop, FindWindowW, GWL_STYLE, GetShellWindow, GetWindowLongW, SW_MINIMIZE,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-            SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WS_CAPTION,
-            WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+            BringWindowToTop, GWL_STYLE, GetShellWindow, GetWindowLongW, MB_ICONERROR, MB_OK,
+            MessageBoxW, SW_MINIMIZE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SWP_NOZORDER, SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow,
+            WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
-use windows::core::HSTRING;
+
+pub fn show_startup_error(message: &str) {
+    let title = windows::core::HSTRING::from(platform::MAIN_WINDOW_TITLE);
+    let message = windows::core::HSTRING::from(message);
+    // SAFETY: both UTF-16 strings remain alive for this synchronous, unowned startup error dialog.
+    unsafe {
+        let _ = MessageBoxW(None, &message, &title, MB_OK | MB_ICONERROR);
+    }
+}
 
 fn find_main_window() -> Result<HWND> {
-    let title = HSTRING::from(platform::MAIN_WINDOW_TITLE);
-    // SAFETY: FindWindowW only reads the supplied title and returns an OS-owned HWND.
-    unsafe { FindWindowW(None, &title).context("FindWindowW main window failed") }
+    crate::platform_native::find_window_by_title(platform::MAIN_WINDOW_TITLE)
 }
 
 /// Refreshes the main window's standard native frame and releases any stale mouse capture.
